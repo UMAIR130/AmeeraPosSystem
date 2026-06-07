@@ -1,0 +1,74 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'RoomHistory.dart';
+
+// **************************************************************************
+// TypeAdapterGenerator
+// **************************************************************************
+
+class RoomHistoryAdapter extends TypeAdapter<RoomHistory> {
+  @override
+  final int typeId = 8;
+
+  @override
+  RoomHistory read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return RoomHistory(
+      roomName: fields[0] as String,
+      customerName: fields[1] as String?,
+      phone: fields[2] as String?,
+      cnic: fields[3] as String?,
+      address: fields[4] as String?,
+      carNumber: fields[5] as String?,
+      rent: fields[6] as int,
+      advance: fields[7] as int,
+      remaining: fields[8] as int,
+      stayType: fields[9] as String?,
+      checkIn: fields[10] as String?,
+      checkOut: fields[11] as String?,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, RoomHistory obj) {
+    writer
+      ..writeByte(12)
+      ..writeByte(0)
+      ..write(obj.roomName)
+      ..writeByte(1)
+      ..write(obj.customerName)
+      ..writeByte(2)
+      ..write(obj.phone)
+      ..writeByte(3)
+      ..write(obj.cnic)
+      ..writeByte(4)
+      ..write(obj.address)
+      ..writeByte(5)
+      ..write(obj.carNumber)
+      ..writeByte(6)
+      ..write(obj.rent)
+      ..writeByte(7)
+      ..write(obj.advance)
+      ..writeByte(8)
+      ..write(obj.remaining)
+      ..writeByte(9)
+      ..write(obj.stayType)
+      ..writeByte(10)
+      ..write(obj.checkIn)
+      ..writeByte(11)
+      ..write(obj.checkOut);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RoomHistoryAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
