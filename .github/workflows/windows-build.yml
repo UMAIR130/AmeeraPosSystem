@@ -19,7 +19,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          version: 3.44.6
+          flutter-version: 3.44.6
 
       - name: Get Dependencies
         run: flutter pub get
@@ -38,13 +38,24 @@ jobs:
 
       # Install Inno Setup
       - name: Install Inno Setup
-        run: choco install innosetup --yes --no-progress
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup installation failed"
+          }
 
       # Create EXE Installer
       - name: Create Windows Installer
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+
+          if (!(Test-Path $iscc)) {
+            throw "Inno Setup compiler not found: $iscc"
+          }
+
           & $iscc installer.iss
 
           if ($LASTEXITCODE -ne 0) {
