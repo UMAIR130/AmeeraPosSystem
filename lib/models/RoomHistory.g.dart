@@ -29,13 +29,14 @@ class RoomHistoryAdapter extends TypeAdapter<RoomHistory> {
       stayType: fields[9] as String?,
       checkIn: fields[10] as String?,
       checkOut: fields[11] as String?,
+      refund: fields[12] as int,
     );
   }
 
   @override
   void write(BinaryWriter writer, RoomHistory obj) {
     writer
-      ..writeByte(12)
+      ..writeByte(13)
       ..writeByte(0)
       ..write(obj.roomName)
       ..writeByte(1)
@@ -59,7 +60,9 @@ class RoomHistoryAdapter extends TypeAdapter<RoomHistory> {
       ..writeByte(10)
       ..write(obj.checkIn)
       ..writeByte(11)
-      ..write(obj.checkOut);
+      ..write(obj.checkOut)
+      ..writeByte(12)
+      ..write(obj.refund);
   }
 
   @override

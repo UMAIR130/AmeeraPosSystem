@@ -20,19 +20,27 @@ class OrderItemAdapter extends TypeAdapter<OrderItem> {
       name: fields[0] as String,
       qty: fields[1] as int,
       price: fields[2] as double,
+      items: (fields[3] as List?)
+          ?.map((dynamic e) => (e as Map).cast<String, dynamic>())
+          ?.toList(),
+      tokenCategory: fields[4] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, OrderItem obj) {
     writer
-      ..writeByte(3)
+      ..writeByte(5)
       ..writeByte(0)
       ..write(obj.name)
       ..writeByte(1)
       ..write(obj.qty)
       ..writeByte(2)
-      ..write(obj.price);
+      ..write(obj.price)
+      ..writeByte(3)
+      ..write(obj.items)
+      ..writeByte(4)
+      ..write(obj.tokenCategory);
   }
 
   @override
@@ -76,13 +84,19 @@ class OrderAdapter extends TypeAdapter<Order> {
       orderNumber: fields[16] as String?,
       customerName: fields[17] as String?,
       customerPhone: fields[18] as String?,
+      customerAddress: fields[19] as String?,
+      riderName: fields[20] as String?,
+      riderPhone: fields[21] as String?,
+      inventoryDeducted: fields[22] as bool,
+      firebaseSynced: fields[23] as bool,
+      hotelName: fields[24] as String,
     );
   }
 
   @override
   void write(BinaryWriter writer, Order obj) {
     writer
-      ..writeByte(19)
+      ..writeByte(25)
       ..writeByte(0)
       ..write(obj.orderId)
       ..writeByte(1)
@@ -120,7 +134,19 @@ class OrderAdapter extends TypeAdapter<Order> {
       ..writeByte(17)
       ..write(obj.customerName)
       ..writeByte(18)
-      ..write(obj.customerPhone);
+      ..write(obj.customerPhone)
+      ..writeByte(19)
+      ..write(obj.customerAddress)
+      ..writeByte(20)
+      ..write(obj.riderName)
+      ..writeByte(21)
+      ..write(obj.riderPhone)
+      ..writeByte(22)
+      ..write(obj.inventoryDeducted)
+      ..writeByte(23)
+      ..write(obj.firebaseSynced)
+      ..writeByte(24)
+      ..write(obj.hotelName);
   }
 
   @override

@@ -1,14 +1,50 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/order_model.dart';
 import 'OrderDetail.dart';
 
-class Orderlist extends StatelessWidget {
+class Orderlist extends StatefulWidget {
   final String hotelName;
 
+  const Orderlist({super.key, required this.hotelName});
 
-  const Orderlist({super.key, required this.hotelName,});
+  @override
+  State<Orderlist> createState() => _OrderlistState();
+}
+
+class _OrderlistState extends State<Orderlist> {
+  Timer? timer;
+
+  @override
+  void initState() {
+    super.initState();
+
+    timer = Timer.periodic(const Duration(seconds: 30), (_) {
+      setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    super.dispose();
+  }
+
+  String timeAgo(DateTime time) {
+    final diff = DateTime.now().difference(time);
+
+    if (diff.inSeconds < 60) {
+      return "Just now";
+    } else if (diff.inMinutes < 60) {
+      return "${diff.inMinutes} min ago";
+    } else if (diff.inHours < 24) {
+      return "${diff.inHours} hour ago";
+    } else {
+      return "${diff.inDays} day ago";
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,33 +55,38 @@ class Orderlist extends StatelessWidget {
         title: const Text("Orders"),
         centerTitle: true,
       ),
+
       body: ValueListenableBuilder(
         valueListenable: box.listenable(),
         builder: (context, Box<Order> box, _) {
-        //  final orders = box.values.toList();
+
           final orders = box.values.where((o) => o.status != "paid").toList();
+
           if (orders.isEmpty) {
             return const Center(child: Text("No Orders Found"));
           }
+
+          // 🔥 RESPONSIVE GRID FIX
+          int crossAxisCount =
+          (MediaQuery.of(context).size.width / 320).floor();
+
+          if (crossAxisCount < 1) crossAxisCount = 1;
 
           return GridView.builder(
             padding: const EdgeInsets.all(16),
             itemCount: orders.length,
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: MediaQuery
-                  .of(context)
-                  .size
-                  .width ~/ 260, // responsive
+              crossAxisCount: crossAxisCount,
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
-              childAspectRatio: 1.25,
+              childAspectRatio: 1.7, // 🔥 FIXED (was 1.8)
             ),
+
             itemBuilder: (context, index) {
               final order = orders[index];
 
               Color statusColor;
 
-              // 🔥 Example Status Logic
               if (order.orderType == "Dine-In") {
                 statusColor = Colors.orange;
               } else if (order.orderType == "Takeaway") {
@@ -56,244 +97,202 @@ class Orderlist extends StatelessWidget {
                 statusColor = Colors.green;
               }
 
-              return MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 10,
-                        offset: const Offset(0, 2),
-                      )
-                    ],
-                  ),
+              return InkWell(
+                  borderRadius: BorderRadius.circular(18),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => OrderDetail(
+                          order: order,
+                          hotelName: widget.hotelName,
+                        ),
+                      ),
+                    );
+                  },
                   child: Card(
                     elevation: 4,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(18),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
 
-                        /// 🔥 ORDER NUMBER TOP BAR
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          decoration: BoxDecoration(
-                            color: statusColor, // dynamic color
-                            borderRadius: const BorderRadius.only(
-                              topLeft: Radius.circular(18),
-                              topRight: Radius.circular(18),
-                            ),
+                // 🔥 SAFE SCROLL INSIDE CARD
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+
+                      /// TOP BAR
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: statusColor,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(18),
+                            topRight: Radius.circular(18),
                           ),
-                          child: Center(
-                            child: Text(
-                              "ORDER #${order.orderId}",
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                letterSpacing: 1,
-                              ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            "ORDER #${order.orderId}",
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
+                      ),
 
-                        /// 🔽 CARD BODY
-                        /// 🔽 CARD BODY
-                        Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
+                      Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
 
-                              Text(
-                                order.orderType,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                            Text(
+                              order.orderType,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
                               ),
+                            ),
 
-                              const SizedBox(height: 6),
+                            const SizedBox(height: 8),
 
-                              /// Floor + Table + Time
-                              if (order.orderType == "Delivery")
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
+                            /// DELIVERY UI
+                            if (order.orderType == "Delivery")
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
 
-                                    Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-
-                                        Expanded(
-                                          child: Text(
-                                            "👤 ${order.customerName ?? ''}",
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-
-                                        const SizedBox(width: 10),
-
-                                        Text(
+                                  // 👤 + 📞 SAME ROW
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text("👤 ${order.customerName ?? ''}"),
+                                      ),
+                                      Expanded(
+                                        child: Text(
                                           "📞 ${order.customerPhone ?? ''}",
-                                          style: const TextStyle(
-                                            fontSize: 13,
-                                          ),
+                                          textAlign: TextAlign.right,
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
+                                  ),
 
-                                    const SizedBox(height: 5),
+                                  const SizedBox(height: 6),
 
-                                    Text(
-                                      "${(order.timestamp.hour > 12 ? order.timestamp.hour - 12 : order.timestamp.hour == 0 ? 12 : order.timestamp.hour)}:"
-                                          "${order.timestamp.minute.toString().padLeft(2, '0')} "
-                                          "${order.timestamp.hour >= 12 ? 'PM' : 'AM'}",
+                                  // ⏰ TIME (CENTER)
+                                  Center(
+                                    child: Text(
+                                      timeAgo(order.timestamp),
                                       style: const TextStyle(
-                                        fontSize: 13,
                                         fontWeight: FontWeight.bold,
                                         color: Colors.blue,
                                       ),
                                     ),
-                                  ],
-                                )
-                              else
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text("Floor: ${order.floorNumber ?? '-'}"),
-                                    Text("Table: ${order.tableNumber ?? '-'}"),
-                                    Text(
-                                      "${(order.timestamp.hour > 12 ? order.timestamp.hour - 12 : order.timestamp.hour == 0 ? 12 : order.timestamp.hour)}:"
-                                          "${order.timestamp.minute.toString().padLeft(2, '0')} "
-                                          "${order.timestamp.hour >= 12 ? 'PM' : 'AM'}",
-                                    ),
-                                  ],
-                                ),
-
-                              const SizedBox(height: 8),
-
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: SizedBox(
-                                      height: 36,
-                                      child: ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: statusColor,
-                                          padding: EdgeInsets.zero,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(10),
-                                          ),
-                                        ),
-                                        onPressed: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) => OrderDetail(
-                                                order: order,
-                                                hotelName: hotelName,
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                        child: const Text(
-                                          "View",
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
                                   ),
+                                ],
+                              )
 
-                                  const SizedBox(width: 6),
-
-                                  Expanded(
-                                    child: SizedBox(
-                                      height: 36,
-                                      child: ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.red,
-                                          padding: EdgeInsets.zero,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(10),
-                                          ),
-                                        ),
-                                        onPressed: () async {
-                                          bool? confirm = await showDialog(
-                                            context: context,
-                                            builder: (_) => AlertDialog(
-                                              title: const Text("Delete Order"),
-                                              content: const Text("Are you sure?"),
-                                              actions: [
-                                                TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.pop(context, false),
-                                                  child: const Text("Cancel"),
-                                                ),
-                                                TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.pop(context, true),
-                                                  child: const Text(
-                                                    "Delete",
-                                                    style: TextStyle(color: Colors.red),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          );
-
-                                          if (confirm == true) {
-                                            await order.delete();
-
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              const SnackBar(
-                                                content: Text("Order deleted"),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        child: const Text(
-                                          "Delete",
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
+                            /// OTHER ORDERS
+                            else
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text("Floor: ${order.floorNumber ?? '-'}"),
+                                  Text("Table: ${order.tableNumber ?? '-'}"),
+                                  Text(
+                                    timeAgo(order.timestamp),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.blue,
                                     ),
                                   ),
                                 ],
                               ),
-                            ],
-                          ),
+
+                            const SizedBox(height: 10),
+
+                            /// BUTTONS
+                            Row(
+                              children: [
+
+
+                                const SizedBox(width: 8),
+
+                                Expanded(
+                                  child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.red,
+                                    ),
+                                    onPressed: () async {
+                                      bool? confirm = await showDialog(
+                                        context: context,
+                                        barrierDismissible: false,
+                                        builder: (context) {
+                                          return AlertDialog(
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(12),
+                                            ),
+                                            title: const Text("Delete Order"),
+                                            content: const Text(
+                                              "Are you sure you want to delete this order?",
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () {
+                                                  Navigator.pop(context, false);
+                                                },
+                                                child: const Text("Cancel"),
+                                              ),
+                                              ElevatedButton(
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: Colors.red,
+                                                ),
+                                                onPressed: () {
+                                                  Navigator.pop(context, true);
+                                                },
+                                                child: const Text(
+                                                  "Delete",
+                                                  style: TextStyle(color: Colors.white),
+                                                ),
+                                              ),
+                                            ],
+                                          );
+                                        },
+                                      );
+
+                                      if (confirm == true) {
+                                        await order.delete();
+
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text("Order deleted successfully"),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Text(
+                                      "Delete",
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-
-
-
-
                 ),
-              );
+              ));
             },
           );
         },
       ),
     );
-  }
-}
+  }}

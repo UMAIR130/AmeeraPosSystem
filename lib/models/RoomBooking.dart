@@ -49,6 +49,15 @@ class RoomBooking extends HiveObject {
   @HiveField(14)
   String? checkIn;
 
+  @HiveField(15)
+  String? checkOut;
+
+
+  @HiveField(16) // next available number use karo
+  int? dailyRent;
+
+
+
   // ✅ int karo
 
   RoomBooking({
@@ -57,8 +66,9 @@ class RoomBooking extends HiveObject {
     this.customerName,
     this.cnic,
     this.advance,
-    this.days,
     this.checkIn,
+    this.checkOut,
+    this.dailyRent,
 
   });
 }

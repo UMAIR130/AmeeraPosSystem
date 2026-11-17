@@ -4,11 +4,15 @@ import 'package:esc_pos_utils/esc_pos_utils.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/services.dart';
 import 'package:hive/hive.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../inventory/models/InventoryHistory.dart';
 import '../inventory/models/InventoryItem.dart';
 import '../inventory/models/MenuRecipe.dart';
 import '../inventory/models/TokenHistory.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/order_model.dart';
 import 'package:http/http.dart' as http;
 
@@ -35,6 +39,11 @@ class _OrderDetailState extends State<OrderDetail> {
   String savedHotelName = "";
   String savedAddress = "";
   String savedPhone = "";
+  int? expandedIndex;
+
+  bool isProcessing = false;
+
+
 
   final TextEditingController discountController = TextEditingController();
   final TextEditingController searchController = TextEditingController();
@@ -53,8 +62,11 @@ class _OrderDetailState extends State<OrderDetail> {
   TextEditingController taxController = TextEditingController(text: "0");
   double taxAmount = 0;
 
+  bool isFullScreen = false;
+  FocusNode _focusNode = FocusNode();
+
   bool discountPercentageEnabled =
-      false; // true agar % discount enable karna ho
+  false; // true agar % discount enable karna ho
   bool discountEnabled = true; // agar default enable rakhna hai
   @override
   void initState() {
@@ -66,77 +78,206 @@ class _OrderDetailState extends State<OrderDetail> {
     loadSavedHotelInfo(); // offline load
 
     loadHotelInfo();
+
+    loadSettings();
+    filteredItems = [];
+    _focusNode.requestFocus();
+
+
+
+ //   startAutoSync();
+
+
+
   }
 
+  void toggleFullScreen() {
+    setState(() {
+      isFullScreen = !isFullScreen;
+    });
 
-
-  Future<void> deductInventory(Order order) async {
-
-    final inventoryBox =
-    Hive.box<InventoryItem>('inventory');
-
-    final recipeBox =
-    Hive.box<MenuRecipe>('recipes');
-
-    for (var orderItem in order.items) {
-
-      // Recipe check
-      final recipe = recipeBox.values.cast<MenuRecipe?>()
-          .firstWhere(
-            (r) => r?.menuName == orderItem.name,
-        orElse: () => null,
-      );
-
-      if (recipe != null) {
-
-        // Chicken Karahi, Biryani etc
-        for (var ingredient in recipe.ingredients) {
-
-          final inventory =
-          inventoryBox.values.firstWhere(
-                (i) =>
-            i.itemName ==
-                ingredient.inventoryName,
-          );
-
-
-          double deductQty =
-              ingredient.qty * orderItem.qty;
-
-          inventory.stock -= deductQty;
-
-          await inventory.save();
-
-
-        }
-      } else {
-
-        // Drink / ReadyMade
-        final inventory =
-        inventoryBox.values.cast<InventoryItem?>()
-            .firstWhere(
-              (i) =>
-          i?.itemName == orderItem.name,
-          orElse: () => null,
-        );
-
-        if (inventory != null &&
-            inventory.itemType != "RawMaterial") {
-
-          inventory.stock =
-              inventory.stock - orderItem.qty;
-
-          await inventory.save();
-        }
-      }
+    if (isFullScreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
+    } else {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
   }
 
 
+  void createNewOrder() {
+    widget.order.items.clear();
+
+    setState(() {});
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("New Order Started")),
+    );
+  }
+  @override
+  void dispose() {
+    serviceController.dispose();
+    taxController.dispose();
+    _focusNode.dispose();
+
+    super.dispose();
+  }
+  Future<void> deductInventory(Order order) async {
+    // ✅ Already deducted? Stop here.
+    if (order.inventoryDeducted == true) {
+      print("Inventory already deducted for Order ${order.orderNumber}");
+      return;
+    }
+
+    final historyBox = Hive.box<InventoryHistory>('inventory_history');
+    final inventoryBox = Hive.box<InventoryItem>('inventory');
+    final recipeBox = Hive.box<MenuRecipe>('recipes');
+
+    for (var orderItem in order.items) {
+
+      /// ================= 1. CHECK RECIPE =================
+      final recipeList = recipeBox.values
+          .where((r) => match(r.menuName, orderItem.name))
+          .toList();
+
+      if (recipeList.isNotEmpty) {
+
+        final recipe = recipeList.first;
+
+        for (var ingredient in recipe.ingredients) {
+
+          final inventoryList = inventoryBox.values
+              .where((i) => match(i.itemName, ingredient.inventoryName))
+              .toList();
+
+          if (inventoryList.isEmpty) continue;
+
+          final inventory = inventoryList.first;
+
+          double deductQty = ingredient.qty * orderItem.qty;
+
+          // Deduct Stock
+          inventory.stock -= deductQty;
+          await inventory.save();
+
+          // Prevent duplicate history
+          final alreadyExists = historyBox.values.any(
+                (h) =>
+            h.orderNo == order.orderNumber &&
+                h.itemName == inventory.itemName &&
+                h.type == "USED" &&
+                h.qty == deductQty,
+          );
+
+          if (!alreadyExists) {
+            await historyBox.add(
+              InventoryHistory(
+                itemName: inventory.itemName,
+                qty: deductQty,
+                unit: inventory.unit,
+                type: "USED",
+                date: DateTime.now(),
+                orderNo: order.orderNumber,
+              ),
+            );
+
+            print("History Length After Save = ${historyBox.length}");
+          }
+        }
+
+        continue;
+      }
+
+      /// ================= 2. DIRECT ITEM =================
+      final inventoryList = inventoryBox.values
+          .where((i) => match(i.itemName, orderItem.name))
+          .toList();
+
+      if (inventoryList.isEmpty) continue;
+
+      final inventory = inventoryList.first;
+
+      if (inventory.itemType == "Drink" ||
+          inventory.itemType == "ReadyMade" ||
+          inventory.itemType == "RawMaterial") {
+
+        double deductQty = orderItem.qty.toDouble();
+
+        // Deduct Stock
+        inventory.stock -= deductQty;
+        await inventory.save();
+
+        // Prevent duplicate history
+        final alreadyExists = historyBox.values.any(
+              (h) =>
+          h.orderNo == order.orderNumber &&
+              h.itemName == inventory.itemName &&
+              h.type == "USED" &&
+              h.qty == deductQty,
+        );
+
+        if (!alreadyExists) {
+          await historyBox.add(
+            InventoryHistory(
+              itemName: inventory.itemName,
+              qty: deductQty,
+              unit: inventory.unit,
+              type: "USED",
+              date: DateTime.now(),
+              orderNo: order.orderNumber,
+            ),
+          );
+        }
+      }
+    }
+
+    // ✅ Mark as deducted ONLY after everything succeeds
+    order.inventoryDeducted = true;
+    await order.save();
+
+    print("Inventory Deducted Successfully : ${order.orderNumber}");
+  }
 
 
 
 
+
+
+
+
+
+  bool match(String a, String b) {
+    return a.trim().toLowerCase() == b.trim().toLowerCase();
+  }
+
+  Future<void> saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setString('servicePercent', serviceController.text);
+    await prefs.setString('taxPercent', taxController.text);
+
+    await prefs.setBool('serviceEnabled', serviceEnabled);
+    await prefs.setBool('taxEnabled', taxEnabled);
+  }
+
+  Future<void> loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    setState(() {
+      serviceController.text =
+          prefs.getString('servicePercent') ?? '';
+
+      taxController.text =
+          prefs.getString('taxPercent') ?? '';
+
+      serviceEnabled =
+          prefs.getBool('serviceEnabled') ?? false;
+
+      taxEnabled =
+          prefs.getBool('taxEnabled') ?? false;
+    });
+
+    calculateBill();
+  }
 
 
   Future<void> loadSavedHotelInfo() async {
@@ -152,6 +293,7 @@ class _OrderDetailState extends State<OrderDetail> {
     savedPhone =
         prefs.getString("${widget.hotelName}_phone") ?? "";
   }
+
   Future<void> loadHotelInfo() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -170,7 +312,9 @@ class _OrderDetailState extends State<OrderDetail> {
         for (var user in usersMap.values) {
           final data = Map<String, dynamic>.from(user);
 
-          if ((data["address"] ?? "").toString().isNotEmpty) {
+          if ((data["address"] ?? "")
+              .toString()
+              .isNotEmpty) {
             savedHotelName =
                 data["HotelName"]?.toString() ?? widget.hotelName;
 
@@ -203,6 +347,7 @@ class _OrderDetailState extends State<OrderDetail> {
       debugPrint("Hotel Load Error: $e");
     }
   }
+
   // 🔥 ADD THESE TWO FUNCTIONS INSIDE _OrderDetailState
 
   void editFloor() async {
@@ -212,24 +357,25 @@ class _OrderDetailState extends State<OrderDetail> {
 
     final result = await showDialog<String>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Edit Floor"),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(hintText: "Enter Floor Number"),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
+      builder: (_) =>
+          AlertDialog(
+            title: const Text("Edit Floor"),
+            content: TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(hintText: "Enter Floor Number"),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel"),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, controller.text),
+                child: const Text("Save"),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text("Save"),
-          ),
-        ],
-      ),
     );
 
     if (result != null && result.isNotEmpty) {
@@ -247,24 +393,25 @@ class _OrderDetailState extends State<OrderDetail> {
 
     final result = await showDialog<String>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Edit Table"),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(hintText: "Enter Table Number"),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
+      builder: (_) =>
+          AlertDialog(
+            title: const Text("Edit Table"),
+            content: TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(hintText: "Enter Table Number"),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel"),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, controller.text),
+                child: const Text("Save"),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text("Save"),
-          ),
-        ],
-      ),
     );
 
     if (result != null && result.isNotEmpty) {
@@ -277,7 +424,6 @@ class _OrderDetailState extends State<OrderDetail> {
 
   // ---------------- LOAD MENU ----------------
   Future<void> loadMenu() async {
-
     setState(() => isLoadingMenu = true);
 
     try {
@@ -309,7 +455,8 @@ class _OrderDetailState extends State<OrderDetail> {
       // 🔵 2. FETCH FROM FIREBASE / HTTP
       if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) {
         final url = Uri.parse(
-          "https://adsadmobandfacebook-default-rtdb.firebaseio.com/Restaurant/${widget.hotelName}/MenuItems.json",
+          "https://adsadmobandfacebook-default-rtdb.firebaseio.com/Restaurant/${widget
+              .hotelName}/MenuItems.json",
         );
 
         final res = await http.get(url);
@@ -317,7 +464,6 @@ class _OrderDetailState extends State<OrderDetail> {
         if (res.statusCode == 200 && res.body != "null") {
           data = Map<String, dynamic>.from(json.decode(res.body));
         }
-
       } else {
         final ref = FirebaseDatabase.instance.ref(
           "Restaurant/${widget.hotelName}/MenuItems",
@@ -332,7 +478,6 @@ class _OrderDetailState extends State<OrderDetail> {
 
       // 🔥 3. PROCESS + CACHE SAVE
       if (data.isNotEmpty) {
-
         List<Map<String, dynamic>> itemsList = [];
 
         data.forEach((categoryKey, categoryValue) {
@@ -340,12 +485,26 @@ class _OrderDetailState extends State<OrderDetail> {
             categoryValue.forEach((itemKey, itemValue) {
               final itemMap = Map<String, dynamic>.from(itemValue);
 
+
+
+              // itemsList.add({
+              //   "name": itemMap["name"] ?? "",
+              //   "price": double.tryParse(itemMap["price"]?.toString() ?? "0") ?? 0,
+              //
+              //   // 🔥 THIS IS MISSING (MAIN FIX)
+              //   "items": itemMap["items"] ?? [],
+              //
+              // });
+
               itemsList.add({
                 "name": itemMap["name"] ?? "",
-                "price": double.tryParse(
-                    itemMap["price"]?.toString() ?? "0") ??
-                    0,
+                "price": double.tryParse(itemMap["price"]?.toString() ?? "0") ?? 0,
+                "items": itemMap["items"] ?? [],
+
+                // 🔥 ADD THIS LINE
+                "tokenCategory": itemMap["tokenCategory"] ?? "Kitchen",
               });
+
             });
           }
         });
@@ -358,13 +517,13 @@ class _OrderDetailState extends State<OrderDetail> {
           filteredItems = List.from(menuItems);
         });
       }
-
     } catch (e) {
       debugPrint("Error fetching menu: $e");
     } finally {
       setState(() => isLoadingMenu = false);
     }
   }
+
   // ---------------- BILL CALCULATION ----------------
   void calculateBill() {
     subTotal = 0;
@@ -376,25 +535,30 @@ class _OrderDetailState extends State<OrderDetail> {
 
     // ===== Service =====
     double servicePercent = double.tryParse(serviceController.text) ?? 0;
-    serviceCharge = serviceEnabled ? subTotal * (servicePercent / 100) : 0;
+    serviceCharge =
+    serviceEnabled ? subTotal * (servicePercent / 100) : 0;
 
     // ===== Tax =====
     double taxPercent = double.tryParse(taxController.text) ?? 0;
-    taxAmount = taxEnabled ? subTotal * (taxPercent / 100) : 0;
+    taxAmount =
+    taxEnabled ? subTotal * (taxPercent / 100) : 0;
 
-    // ===== Discount =====
+    // ===== Gross Total (Subtotal + Service + Tax) =====
+    double grossTotal = subTotal + serviceCharge + taxAmount;
+
+    // ===== Discount (Apply after Service & Tax) =====
     double discountPercent = double.tryParse(discountController.text) ?? 0;
     discount = discountEnabled
-        ? subTotal * (discountPercent / 100)
+        ? grossTotal * (discountPercent / 100)
         : 0;
 
     // ===== Grand Total =====
-    grandTotal = subTotal + serviceCharge + taxAmount - discount;
+    grandTotal = grossTotal - discount;
 
     // ===== Save in Hive =====
     widget.order.subTotal = subTotal;
     widget.order.service = serviceCharge;
-    widget.order.tax = taxAmount; // Make sure 'tax' field exists in model
+    widget.order.tax = taxAmount;
     widget.order.discount = discount;
     widget.order.grandTotal = grandTotal;
 
@@ -402,7 +566,6 @@ class _OrderDetailState extends State<OrderDetail> {
 
     setState(() {});
   }
-
   void removeItem(int index) {
     setState(() {
       widget.order.items.removeAt(index);
@@ -459,628 +622,802 @@ class _OrderDetailState extends State<OrderDetail> {
       }).toList();
     });
   }
+
   // ---------------- ADD ITEM ----------------
   void addItem(Map<String, dynamic> item) {
     setState(() {
-      widget.order.items.add(
-        OrderItem(
-          name: item["name"] ?? "",
-          qty: 1,
-          price: (item["price"] ?? 0).toDouble(),
-        ),
+      final raw = item["items"];
+
+      List<Map<String, dynamic>> dealItems = [];
+
+      if (raw is List) {
+        dealItems = raw
+            .where((e) => e != null)
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+
+      final newItem = OrderItem(
+        name: item["name"] ?? "",
+        qty: 1,
+        price: (item["price"] ?? 0).toDouble(),
+
+        // 🔥 IMPORTANT FIX
+        tokenCategory: item["tokenCategory"] ?? "Kitchen",
+
+        items: dealItems.isEmpty ? null : dealItems,
       );
+
+      widget.order.items.add(newItem);
+
+      widget.order.save(); // 🔥 MUST
       calculateBill();
     });
   }
-
-
-
-
-  // void addItem(Map<String, dynamic> item) {
-  //   setState(() {
-  //
-  //     int existingIndex = widget.order.items.indexWhere(
-  //           (e) => e.name == item["name"],
-  //     );
-  //
-  //     if (existingIndex != -1) {
-  //
-  //       widget.order.items[existingIndex].qty += 1;
-  //
-  //     } else {
-  //
-  //       widget.order.items.add(
-  //         OrderItem(
-  //           name: item["name"] ?? "",
-  //           qty: 1,
-  //           price: (item["price"] ?? 0).toDouble(),
-  //         ),
-  //       );
-  //     }
-  //
-  //     calculateBill();
-  //   });
-  // }
-
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xfff4f6f9),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        title: Text(
-          "ORDER #${widget.order.orderId}",
-          style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Center(
-              child: Text(
-                "Items: ${widget.order.items.length}",
-                style: const TextStyle(fontSize: 16),
+    return RawKeyboardListener(
+        focusNode: _focusNode,
+        autofocus: true,
+        onKey: (event) {
+          if (event is! RawKeyDownEvent) return;
+
+          final ctrl = event.isControlPressed;
+          final key = event.logicalKey;
+
+          // 🖨️ PRINT TOKEN
+          if (ctrl && key == LogicalKeyboardKey.keyP) {
+            printToken();
+          }
+
+          // 🧾 PRINT BILL
+          else if (ctrl && key == LogicalKeyboardKey.keyB) {
+            printReceipt(
+              order: widget.order,
+              status: widget.order.status ?? "UNPAID",
+            );
+          }
+
+          // ➕ NEW ORDER
+          else if (ctrl && key == LogicalKeyboardKey.keyN) {
+            createNewOrder(); // apna function
+          }
+
+          // ❌ ESC (cancel / close dialog)
+          else if (key == LogicalKeyboardKey.escape) {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          }
+
+          // 🖥️ F11 FULLSCREEN TOGGLE
+          else if (key == LogicalKeyboardKey.f11) {
+            toggleFullScreen();
+          }
+        },
+
+
+    child:  Container(
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: Colors.orange,
+          width: 7,
+        )
+      ),
+      child: Scaffold(
+        backgroundColor: const Color(0xfff4f6f9),
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          title: Text(
+            "ORDER #${widget.order.orderId}",
+            style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
+          ),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Center(
+                child: Text(
+                  "Items: ${widget.order.items.length}",
+                  style: const TextStyle(fontSize: 16),
+                ),
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
 
-      body: Row(
-        children: [
+        body: Row(
+          children: [
           // ================= LEFT SIDE =================
           Expanded(
-            flex: 3,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  // ================= ORDER INFO CARD =================
-                  // ================= ORDER INFO CARD =================
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(20),
-                    margin: const EdgeInsets.only(bottom: 20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // 🔥 HOTEL NAME CENTER
-                        Center(
-                          child: Text(
-                            widget.hotelName,
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1,
-                            ),
-                          ),
-                        ),
-
-
-
-                        const SizedBox(height: 8),
-
-                        Column(
-                          children: [
-
-                            Center(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: widget.order.orderType == "Dine In"
-                                      ? Colors.green.shade100
-                                      : widget.order.orderType == "Take Away"
-                                      ? Colors.orange.shade100
-                                      : Colors.blue.shade100,
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  widget.order.orderType,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                    color: widget.order.orderType == "Dine In"
-                                        ? Colors.green.shade800
-                                        : widget.order.orderType == "Take Away"
-                                        ? Colors.orange.shade800
-                                        : Colors.blue.shade800,
-                                  ),
-                                ),
-                              ),
-                            ),
-
-                            if (widget.order.orderType == "Delivery") ...[
-                              const SizedBox(height: 8),
-
-                              Row(
-                                children: [
-
-                                  Expanded(
-                                    child: Text(
-                                      "📞 ${widget.order.customerPhone ?? ''}",
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-
-                                  Expanded(
-                                    child: Text(
-                                      "👤 ${widget.order.customerName ?? ''}",
-                                      textAlign: TextAlign.right,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-
-                                ],
-                              ),
-                            ],
-                          ],
-                        ),
-
-
-
-
-
-
-                        const SizedBox(height: 20),
-
-                        // 🔥 FLOOR & TABLE EDITABLE
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  "Floor: ${widget.order.floorNumber ?? "-"}",
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.edit, size: 18),
-                                  onPressed: editFloor,
-                                ),
-                              ],
-                            ),
-
-                            Row(
-                              children: [
-                                Text(
-                                  "Table: ${widget.order.tableNumber ?? "-"}",
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.edit, size: 18),
-                                  onPressed: editTable,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        // 🔥 DATE & TIME
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              "Date: ${widget.order.timestamp.day}-${widget.order.timestamp.month}-${widget.order.timestamp.year}",
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                            Text(
-                              "Time: ${widget.order.timestamp.hour}:${widget.order.timestamp.minute.toString().padLeft(2, '0')}",
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  // ====== HEADER WITH ADD BUTTON ======
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        "ORDER ITEMS",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.yellow,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        onPressed: () => showDialog(
-                          context: context,
-                          builder: (_) => menuDialog(),
-                        ),
-                        icon: const Icon(Icons.add),
-                        label: const Text("Add"),
+          flex: 3,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                // ================= ORDER INFO CARD =================
+                // ================= ORDER INFO CARD =================
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
                       ),
                     ],
                   ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 🔥 HOTEL NAME CENTER
+                      Center(
+                        child: Text(
+                          widget.hotelName,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ),
 
-                  const SizedBox(height: 20),
 
-                  // ====== ITEM LIST ======
-                  Expanded(
-                    child: widget.order.items.isEmpty
-                        ? const Center(
-                            child: Text(
-                              "No Items Added",
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.grey,
+                      const SizedBox(height: 8),
+
+                      Column(
+                        children: [
+
+                          Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: widget.order.orderType == "Dine In"
+                                    ? Colors.green.shade100
+                                    : widget.order.orderType == "Take Away"
+                                    ? Colors.orange.shade100
+                                    : Colors.blue.shade100,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                widget.order.orderType,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  color: widget.order.orderType == "Dine In"
+                                      ? Colors.green.shade800
+                                      : widget.order.orderType == "Take Away"
+                                      ? Colors.orange.shade800
+                                      : Colors.blue.shade800,
+                                ),
                               ),
                             ),
-                          )
-                        : ListView.builder(
-                            itemCount: widget.order.items.length,
-                            itemBuilder: (context, index) {
-                              final item = widget.order.items[index];
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 12),
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.grey.shade200,
-                                      blurRadius: 6,
-                                      offset: const Offset(0, 3),
-                                    ),
-                                  ],
-                                ),
-                                  child: Row(
+                          ),
+
+                          if (widget.order.orderType == "Delivery") ...[
+                            const SizedBox(height: 8),
+
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.blue.shade100),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+
+                                  // 👤 CUSTOMER LABEL + EDIT BUTTON
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text(
+                                        "CUSTOMER DETAILS",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, color: Colors.blue),
+                                        onPressed: () {
+                                          editCustomerDetails(); // 🔥 function bana lena
+                                        },
+                                      ),
+                                    ],
+                                  ),
+
+                                  const SizedBox(height: 6),
+
+                                  Row(
                                     children: [
                                       Expanded(
                                         child: Text(
+                                          "Name: ${widget.order.customerName ?? ''}",
+                                          style: const TextStyle(fontWeight: FontWeight.w600),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          "Phone: ${widget.order.customerPhone ?? ''}",
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(fontWeight: FontWeight.w600),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          "Address: ${widget.order.customerAddress ?? ''}",
+                                          textAlign: TextAlign.right,
+                                          style: const TextStyle(fontWeight: FontWeight.w600),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+
+                                  const Divider(height: 20),
+
+                                  // 🚴 RIDER LABEL + EDIT BUTTON
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text(
+                                        "RIDER DETAILS",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, color: Colors.blue),
+                                        onPressed: () {
+                                          editRiderDetails(); // 🔥 function bana lena
+                                        },
+                                      ),
+                                    ],
+                                  ),
+
+                                  const SizedBox(height: 6),
+
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          "Name: ${widget.order.riderName ?? 'Not Assigned'}",
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.blue,
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          "Phone: ${widget.order.riderPhone ?? ''}",
+                                          textAlign: TextAlign.right,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.blue,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+
+
+
+                        ],
+                      ),
+
+
+                      const SizedBox(height: 20),
+
+                      // 🔥 FLOOR & TABLE EDITABLE
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                "Floor: ${widget.order.floorNumber ?? "-"}",
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.edit, size: 18),
+                                onPressed: editFloor,
+                              ),
+                            ],
+                          ),
+
+                          Row(
+                            children: [
+                              Text(
+                                "Table: ${widget.order.tableNumber ?? "-"}",
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.edit, size: 18),
+                                onPressed: editTable,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // 🔥 DATE & TIME
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            "Date: ${widget.order.timestamp.day}-${widget.order
+                                .timestamp.month}-${widget.order.timestamp.year}",
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          Text(
+                            "Time: ${((widget.order.timestamp.hour % 12 == 0) ? 12 : widget.order.timestamp.hour % 12).toString().padLeft(2, '0')}:${widget.order.timestamp.minute.toString().padLeft(2, '0')} ${widget.order.timestamp.hour >= 12 ? 'PM' : 'AM'}",
+                            style: const TextStyle(fontSize: 14),
+                          ),
+
+
+
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                // ====== HEADER WITH ADD BUTTON ======
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      "ORDER ITEMS",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.yellow,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      onPressed: () =>
+                          showDialog(
+                            context: context,
+                            builder: (_) => menuDialog(),
+                          ),
+                      icon: const Icon(Icons.add),
+                      label: const Text("Add"),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+
+                // ====== ITEM LIST ======
+                Expanded(
+                  child: widget.order.items.isEmpty
+                      ? const Center(
+                    child: Text(
+                      "No Items Added",
+                      style: TextStyle(fontSize: 16, color: Colors.grey),
+                    ),
+                  )
+                      : ListView.builder(
+                    itemCount: widget.order.items.length,
+                    itemBuilder: (context, index) {
+                      final item = widget.order.items[index];
+
+                      final dealList = (item.items is List)
+                          ? List<Map<String, dynamic>>.from(
+                          (item.items as List)
+                              .where((e) => e != null)
+                              .map((e) => Map<String, dynamic>.from(e))
+                      )
+                          : <Map<String, dynamic>>[];
+
+                      final isDeal =
+                          item.items != null &&
+                              item.items is List &&
+                              (item.items as List).isNotEmpty;
+                      final isExpanded = expandedIndex == index;
+
+                      return Column(
+                        children: [
+                          // ================= MAIN ITEM =================
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.grey.shade200,
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                // NAME TAP AREA
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: () {
+                                      if (isDeal) {
+                                        setState(() {
+                                          expandedIndex =
+                                          isExpanded ? null : index;
+                                        });
+                                      }
+                                    },
+                                    child: Row(
+                                      children: [
+                                        Text(
                                           item.name,
                                           style: const TextStyle(
                                             fontSize: 16,
                                             fontWeight: FontWeight.bold,
                                           ),
                                         ),
-                                      ),
-
-                                      // 🔥 Minus Button
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.remove_circle,
-                                          color: Colors.red,
-                                        ),
-                                        onPressed: () => decreaseQty(index),
-                                      ),
-
-                                      // 🔥 Quantity
-                                      Container(
-                                        width: 40,
-                                        alignment: Alignment.center,
-                                        child: Text(
-                                          "${item.qty}",
-                                          style: const TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-
-                                      // 🔥 Plus Button
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.add_circle,
-                                          color: Colors.green,
-                                        ),
-                                        onPressed: () => increaseQty(index),
-                                      ),
-
-                                      const SizedBox(width: 10),
-
-                                      Text(
-                                        "Rs ${(item.price * item.qty).toStringAsFixed(0)}",
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.delete,
-                                          color: Colors.red,
-                                        ),
-                                        onPressed: () => removeItem(index),
-                                      ),
-                                    ],
+                                        if (isDeal)
+                                          const Icon(Icons.arrow_drop_down),
+                                      ],
+                                    ),
                                   ),
-                              );
-                            },
+                                ),
+
+                                IconButton(
+                                  icon: const Icon(Icons.remove_circle,
+                                      color: Colors.red),
+                                  onPressed: () => decreaseQty(index),
+                                ),
+
+                                Container(
+                                  width: 40,
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    "${item.qty}",
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+
+                                IconButton(
+                                  icon: const Icon(Icons.add_circle,
+                                      color: Colors.green),
+                                  onPressed: () => increaseQty(index),
+                                ),
+
+                                const SizedBox(width: 10),
+
+                                Text(
+                                  "Rs ${(item.price * item.qty).toStringAsFixed(0)}",
+                                ),
+
+                                IconButton(
+                                  icon: const Icon(Icons.delete,
+                                      color: Colors.red),
+                                  onPressed: () => removeItem(index),
+                                ),
+                              ],
+                            ),
                           ),
-                  ),
-                ],
-              ),
-            ),
-          ),
 
-          // ================= RIGHT SIDE =================
-          Container(
-            width: 350,
-            padding: const EdgeInsets.all(20),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              border: Border(left: BorderSide(color: Colors.grey, width: 0.5)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  "BILL SUMMARY",
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1,
-                  ),
-                ),
-                const SizedBox(height: 20),
-
-                // Subtotal
-                rowItem("Sub Total", subTotal),
-
-                const SizedBox(height: 10),
-
-                // Service Charge Toggle + % Input
-                Row(
-                  children: [
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Switch(
-                            value: serviceEnabled,
-                            onChanged: (v) {
-                              setState(() {
-                                serviceEnabled = v;
-                                calculateBill(); // recalc on toggle
-                              });
-                            },
-                          ),
-                          const Text("Service Charge"),
+                          // ================= DEAL SUB ITEMS =================
+                          if (isDeal && isExpanded)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 25, bottom: 10),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: dealList.map((d) {
+                                  return Text("• ${d["name"]} x${d["qty"]}");
+                                }).toList(),
+                              ),
+                            ),
                         ],
-                      ),
-                    ),
-                    SizedBox(
-                      width: 60,
-                      child: TextField(
-                        controller: serviceController,
-                        enabled: serviceEnabled,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 4,
-                          ),
-                        ),
-                        onChanged: (_) => calculateBill(),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Text("%"),
-                  ],
-                ),
-
-                // TAX Toggle
-                Row(
-                  children: [
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Switch(
-                            value: taxEnabled,
-                            onChanged: (v) {
-                              setState(() {
-                                taxEnabled = v;
-                                calculateBill();
-                              });
-                            },
-                          ),
-                          const Text("Tax"),
-                        ],
-                      ),
-                    ),
-                    SizedBox(
-                      width: 60,
-                      child: TextField(
-                        controller: taxController,
-                        enabled: taxEnabled,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 4,
-                          ),
-                        ),
-                        onChanged: (_) => calculateBill(),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Text("%"),
-                  ],
-                ),
-
-                const SizedBox(height: 10),
-
-                rowItem("Tax (${taxController.text}%)", taxAmount),
-
-                const SizedBox(height: 10),
-
-                // Show calculated service charge
-                rowItem("Service (${serviceController.text}%)", serviceCharge),
-
-                const SizedBox(height: 15),
-
-                // Discount
-                TextField(
-                  controller: discountController,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: "Discount",
-                    filled: true,
-                    fillColor: Colors.grey.shade100,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  onChanged: (_) => calculateBill(),
-                ),
-
-                const Spacer(),
-
-                // Total
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade600,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        "TOTAL",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        "Rs ${grandTotal.toStringAsFixed(2)}",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 15),
-
-                // PAY BUTTON
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    onPressed: () {
-                      showPaymentDialog();
-                    },
-                    child: const Text(
-                      "PAY NOW",
-                      style: TextStyle(fontSize: 16),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 10),
-
-// 🖨️ PRINT BUTTON
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.print),
-                    label: const Text("PRINT Token",style: TextStyle(color: Colors.white)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                      onPressed: () async {
-
-                       // await printCategoryTokens();
-                        await printToken();
-                      }
-                  ),
-                ),
-
-                const SizedBox(height: 10),
-
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.print),
-                    label: const Text("PRINT BILL",style: TextStyle(color: Colors.white),),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-
-                    onPressed: () async {
-                      if (widget.order.items.isEmpty) return;
-
-
-                      await printReceipt(
-                        order: widget.order,
-                        status: widget.order.status ?? "UNPAID",
                       );
                     },
                   ),
-                ),
+                )
               ],
             ),
           ),
-        ],
+        ),
+
+        // ================= RIGHT SIDE =================
+        Container(
+          width: 350,
+          padding: const EdgeInsets.all(20),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(left: BorderSide(color: Colors.grey, width: 0.5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "BILL SUMMARY",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1,
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Subtotal
+              rowItem("Sub Total", subTotal),
+
+              const SizedBox(height: 10),
+
+              // Service Charge Toggle + % Input
+              Row(
+                children: [
+              Expanded(
+              child: Row(
+              children: [
+                Switch(
+                value: serviceEnabled,
+                onChanged: (v) {
+                  setState(() {
+                    serviceEnabled = v;
+                    calculateBill();
+                  });
+
+                  saveSettings();
+                },
+              ),
+              const Text("Service Charge"),
+            ],
+          ),
+        ),
+        SizedBox(
+            width: 60,
+            child: TextField(
+                controller: serviceController,
+                enabled: serviceEnabled,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 4,
+                  ),
+                ),
+              onChanged: (_) {
+                calculateBill();
+                saveSettings();
+              },
+        ),
       ),
+      const SizedBox(width: 4),
+      const Text("%"),
+      ],
+      ),
+
+      // TAX Toggle
+      Row(
+      children: [
+      Expanded(
+      child: Row(
+      children: [
+      Switch(
+      value: taxEnabled,
+      onChanged: (v) {
+      setState(() {
+      taxEnabled = v;
+      calculateBill();
+      });
+
+      saveSettings();
+
+      },
+      ),
+      const Text("Tax"),
+      ],
+      ),
+      ),
+      SizedBox(
+      width: 60,
+      child: TextField(
+      controller: taxController,
+      enabled: taxEnabled,
+      keyboardType: TextInputType.number,
+      decoration: const InputDecoration(
+      isDense: true,
+      border: OutlineInputBorder(),
+      contentPadding: EdgeInsets.symmetric(
+      horizontal: 6,
+      vertical: 4,
+      ),
+      ),
+      onChanged: (_) {
+      calculateBill();
+      saveSettings();
+      },
+      ),
+      ),
+      const SizedBox(width: 4),
+      const Text("%"),
+      ],
+      ),
+
+      const SizedBox(height: 10),
+
+      rowItem("Tax (${taxController.text}%)", taxAmount),
+
+      const SizedBox(height: 10),
+
+      // Show calculated service charge
+      rowItem("Service (${serviceController.text}%)", serviceCharge),
+
+      const SizedBox(height: 15),
+
+      // Discount
+      TextField(
+      controller: discountController,
+      keyboardType: TextInputType.number,
+      decoration: InputDecoration(
+      labelText: "Discount",
+      filled: true,
+      fillColor: Colors.grey.shade100,
+      border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(8),
+      ),
+      ),
+      onChanged: (_) => calculateBill(),
+      ),
+
+      const Spacer(),
+
+      // Total
+      Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+      color: Colors.green.shade600,
+      borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+      const Text(
+      "TOTAL",
+      style: TextStyle(
+      color: Colors.white,
+      fontSize: 18,
+      fontWeight: FontWeight.bold,
+      ),
+      ),
+      Text(
+      "Rs ${grandTotal.toStringAsFixed(2)}",
+      style: const TextStyle(
+      color: Colors.white,
+      fontSize: 20,
+      fontWeight: FontWeight.bold,
+      ),
+      ),
+      ],
+      ),
+      ),
+
+      const SizedBox(height: 15),
+
+      // PAY BUTTON
+      SizedBox(
+      width: double.infinity,
+      height: 50,
+      child: ElevatedButton(
+      style: ElevatedButton.styleFrom(
+      backgroundColor: Colors.black,
+      shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(8),
+      ),
+      ),
+      onPressed: () {
+      showPaymentDialog();
+      },
+      child: const Text(
+      "PAY NOW",
+      style: TextStyle(fontSize: 16),
+      ),
+      ),
+      ),
+
+      const SizedBox(height: 10),
+
+      // 🖨️ PRINT BUTTON
+      SizedBox(
+      width: double.infinity,
+      height: 50,
+      child: ElevatedButton.icon(
+      icon: const Icon(Icons.print),
+      label: const Text("PRINT Token",style: TextStyle(color: Colors.white)),
+      style: ElevatedButton.styleFrom(
+      backgroundColor: Colors.blue,
+      shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(8),
+      ),
+      ),
+      onPressed: () async {
+
+      // await printCategoryTokens();
+      await printToken();
+      }
+      ),
+      ),
+
+      const SizedBox(height: 10),
+
+
+      SizedBox(
+      width: double.infinity,
+      height: 50,
+      child: ElevatedButton.icon(
+      icon: const Icon(Icons.print),
+      label: const Text("PRINT BILL",style: TextStyle(color: Colors.white),),
+      style: ElevatedButton.styleFrom(
+      backgroundColor: Colors.blue,
+      shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(8),
+      ),
+      ),
+
+      onPressed: () async {
+      if (widget.order.items.isEmpty) return;
+
+
+      await printReceipt(
+      order: widget.order,
+      status: widget.order.status ?? "UNPAID",
+      );
+      },
+      ),
+      ),
+      ],
+      ),
+      ),
+      ]
+      ,
+      )
+      ,
+      ),
+    )
     );
   }
-
 
 
   Widget rowItem(String title, double value, {bool isBold = false}) {
@@ -1106,10 +1443,10 @@ class _OrderDetailState extends State<OrderDetail> {
     );
   }
 
-  // ---------------- MENU DIALOG ----------------
-  Widget menuDialog() {
-    filteredItems = [...menuItems];
 
+
+
+  Widget menuDialog() {
     return StatefulBuilder(
       builder: (context, dialogSetState) {
         return AlertDialog(
@@ -1131,14 +1468,12 @@ class _OrderDetailState extends State<OrderDetail> {
               });
             },
           ),
+
           content: SizedBox(
             width: 800,
             height: 400,
-            child: filteredItems.isEmpty
-                ? const Center(child: Text("No Menu Items Found"))
-                : GridView.builder(
-              gridDelegate:
-              const SliverGridDelegateWithFixedCrossAxisCount(
+            child: GridView.builder(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 10,
                 crossAxisSpacing: 8,
                 mainAxisSpacing: 8,
@@ -1147,43 +1482,21 @@ class _OrderDetailState extends State<OrderDetail> {
               itemCount: filteredItems.length,
               itemBuilder: (context, index) {
                 final item = filteredItems[index];
-                final bool isMatched = searchController.text.isNotEmpty &&
-                    item["name"]
-                        .toString()
-                        .toLowerCase()
-                        .contains(searchController.text.toLowerCase());
-
 
                 return InkWell(
                   onTap: () {
+                    print("ITEM: $item"); // 🔥 DEBUG IMPORTANT
                     addItem(item);
                     Navigator.pop(context);
                   },
                   child: Container(
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: isMatched
-                          ? Colors.greenAccent.shade400
-                          : Colors.orange.shade200,
+                      color: Colors.orange.shade200,
                       borderRadius: BorderRadius.circular(8),
-
-                      border: isMatched
-                          ? Border.all(
-                        color: Colors.red,
-                        width: 1,
-                      )
-                          : null,
                     ),
-                    child: Text(
-                      item["name"],
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight:
-                        isMatched ? FontWeight.w900 : FontWeight.bold,
-                        color: Colors.black,
-                      ),
-                    ),                  ),
+                    child: Text(item["name"]),
+                  ),
                 );
               },
             ),
@@ -1192,6 +1505,7 @@ class _OrderDetailState extends State<OrderDetail> {
       },
     );
   }
+
   void showPaymentDialog() {
     showDialog(
       context: context,
@@ -1243,55 +1557,109 @@ class _OrderDetailState extends State<OrderDetail> {
 
 // ===== HELPER FUNCTION FOR NON-CASH PAYMENTS =====
   Future<void> _markOrderPaid(String paymentMethod) async {
-    widget.order.status = "paid";
-    widget.order.paymentMethod = paymentMethod;
-    widget.order.receivedAmount = widget.order.grandTotal;
-    widget.order.returnedAmount = 0;
-    widget.order.timestamp = DateTime.now();
+    if (isProcessing) return;
 
-    // Update original orders box
-    await widget.order.save();
+    setState(() {
+      isProcessing = true;
+    });
 
-    // Save to history box as a new object
-    final historyBox = Hive.box<Order>('orders_history');
-    final orderForHistory = Order(
-      orderId: widget.order.orderId,
-      orderType: widget.order.orderType,
-      tableNumber: widget.order.tableNumber,
-      floorNumber: widget.order.floorNumber,
-      items: widget.order.items.map((e) => OrderItem(
-        name: e.name,
-        qty: e.qty,
-        price: e.price,
-      )).toList(),
-      subTotal: widget.order.subTotal,
-      service: widget.order.service,
-      discount: widget.order.discount,
-      grandTotal: widget.order.grandTotal,
-      tax: widget.order.tax,
-      status: widget.order.status,
-      paymentMethod: widget.order.paymentMethod,
-      receivedAmount: widget.order.receivedAmount,
-      returnedAmount: widget.order.returnedAmount,
-      timestamp: widget.order.timestamp,
-    );
-    await historyBox.add(orderForHistory);
-
-    await printReceipt(
-      order: widget.order,
-      status: "PAID",
-    );
+    try {
+      final historyBox = Hive.box<Order>('orders_history');
 
 
-    Navigator.pop(context); // close dialog
-    Navigator.pop(context); // back to OrderList
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Paid via $paymentMethod & Saved to History")),
-    );
-  }
+      widget.order.status = "paid";
+      widget.order.paymentMethod = paymentMethod;
+      widget.order.receivedAmount = widget.order.grandTotal;
+      widget.order.returnedAmount = 0;
+      widget.order.timestamp = DateTime.now();
 
-// ===== CASH DIALOG =====
+      await widget.order.save();
+
+      // Inventory
+      await deductInventory(widget.order);
+
+      final orderForHistory = Order(
+        hotelName: widget.hotelName,
+        orderId: widget.order.orderId,
+        orderNumber: widget.order.orderNumber,
+        orderType: widget.order.orderType,
+        tableNumber: widget.order.tableNumber,
+        floorNumber: widget.order.floorNumber,
+        items: widget.order.items
+            .map(
+              (e) => OrderItem(
+            name: e.name,
+            qty: e.qty,
+            price: e.price,
+            items: e.items,
+            tokenCategory: e.tokenCategory,
+          ),
+        )
+            .toList(),
+        subTotal: widget.order.subTotal,
+        service: widget.order.service,
+        discount: widget.order.discount,
+        grandTotal: widget.order.grandTotal,
+        tax: widget.order.tax,
+        status: widget.order.status,
+        paymentMethod: widget.order.paymentMethod,
+        receivedAmount: widget.order.receivedAmount,
+        returnedAmount: widget.order.returnedAmount,
+        timestamp: widget.order.timestamp,
+        inventoryDeducted: widget.order.inventoryDeducted,
+        firebaseSynced: false,
+      );
+
+      // Save in history
+      await historyBox.add(orderForHistory);
+
+      try {
+         uploadSalesSummary(orderForHistory, widget.hotelName);
+
+        orderForHistory.firebaseSynced = true;
+        await orderForHistory.save();
+      } catch (e) {
+        orderForHistory.firebaseSynced = false;
+        await orderForHistory.save();
+      }
+
+// 🖨️ Print after sync/offline check
+      try {
+        await printReceipt(
+          order: widget.order,
+          status: "PAID",
+        );
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                "Order saved successfully. Printer failed: $e",
+              ),
+            ),
+          );
+        }
+      }
+
+      if (mounted) {
+        Navigator.pop(context);
+        Navigator.pop(context);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Paid via $paymentMethod"),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          isProcessing = false;
+        });
+      }
+    }
+  }// ===== CASH DIALOG =====
   void showCashDialog() {
     receivedController.clear();
     returnedAmount = 0;
@@ -1366,7 +1734,8 @@ class _OrderDetailState extends State<OrderDetail> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      "Return: Rs ${returnedAmount > 0 ? returnedAmount.toStringAsFixed(0) : "0"}",
+                      "Return: Rs ${returnedAmount > 0 ? returnedAmount
+                          .toStringAsFixed(0) : "0"}",
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 20,
@@ -1381,7 +1750,8 @@ class _OrderDetailState extends State<OrderDetail> {
           ),
 
           // 🔹 ACTION BUTTONS (PRO STYLE)
-          actionsPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          actionsPadding: const EdgeInsets.symmetric(
+              horizontal: 10, vertical: 10),
           actions: [
             SizedBox(
               width: 100,
@@ -1400,68 +1770,152 @@ class _OrderDetailState extends State<OrderDetail> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-        onPressed: () async {
+                onPressed: isProcessing
+                    ? null
+                    : () async {
 
-        double received =
-        double.tryParse(receivedController.text) ?? 0;
+                  if (isProcessing) return;
 
-        widget.order.status = "paid";
-        widget.order.paymentMethod = "Cash";
-        widget.order.receivedAmount = received;
-        widget.order.returnedAmount =
-        received - widget.order.grandTotal;
-        widget.order.timestamp = DateTime.now();
+                  setState(() {
+                    isProcessing = true;
+                  });
 
-        await widget.order.save();
+                  try {
+                    double received =
+                        double.tryParse(receivedController.text) ?? 0;
 
-        final historyBox = Hive.box<Order>('orders_history');
+                    widget.order.status = "paid";
+                    widget.order.paymentMethod = "Cash";
+                    widget.order.receivedAmount = received;
+                    widget.order.returnedAmount =
+                        received - widget.order.grandTotal;
+                    widget.order.timestamp = DateTime.now();
 
-        final orderForHistory = Order(
-          orderId: widget.order.orderId,
-          orderNumber: widget.order.orderNumber,
+                    final historyBox = Hive.box<Order>('orders_history');
 
-          orderType: widget.order.orderType,
-        tableNumber: widget.order.tableNumber,
-        floorNumber: widget.order.floorNumber,
-        items: widget.order.items
-            .map((e) => OrderItem(
-        name: e.name,
-        qty: e.qty,
-        price: e.price,
-        ))
-            .toList(),
-        subTotal: widget.order.subTotal,
-        service: widget.order.service,
-        discount: widget.order.discount,
-        grandTotal: widget.order.grandTotal,
-        tax: widget.order.tax,
-        status: widget.order.status,
-        paymentMethod: widget.order.paymentMethod,
-        receivedAmount: widget.order.receivedAmount,
-        returnedAmount: widget.order.returnedAmount,
-        timestamp: widget.order.timestamp,
-        );
+                    // Already processed?
+                    final alreadyExists = historyBox.values.any(
+                          (o) => o.orderId == widget.order.orderId,
+                    );
 
-        await historyBox.add(orderForHistory);
-        await deductInventory(widget.order);
+                    if (alreadyExists) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text("Order already processed"),
+                          ),
+                        );
+                      }
+                      return;
+                    }
 
-        await printReceipt(
-        order: widget.order,
-        status: "PAID",
-        );
+                    await widget.order.save();
 
-        Navigator.pop(context);
-        Navigator.pop(context);
+                    // Deduct inventory
+                    await deductInventory(widget.order);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-        content: Text("Order Paid"),
-        ),
-        );
-        },
-                child: const Text(
+                    // Create history
+                    final orderForHistory = Order(
+                      hotelName: widget.hotelName,
+                      orderId: widget.order.orderId,
+                      orderNumber: widget.order.orderNumber,
+                      orderType: widget.order.orderType,
+                      tableNumber: widget.order.tableNumber,
+                      floorNumber: widget.order.floorNumber,
+                      items: widget.order.items
+                          .map((e) => OrderItem(
+                        name: e.name,
+                        qty: e.qty,
+                        price: e.price,
+                        items: e.items != null
+                            ? List<Map<String, dynamic>>.from(
+                          (e.items as List<dynamic>)
+                              .map((d) => Map<String, dynamic>.from(d)),
+                        )
+                            : null,
+                      ))
+                          .toList(),
+                      subTotal: widget.order.subTotal,
+                      service: widget.order.service,
+                      discount: widget.order.discount,
+                      grandTotal: widget.order.grandTotal,
+                      tax: widget.order.tax,
+                      status: widget.order.status,
+                      paymentMethod: widget.order.paymentMethod,
+                      receivedAmount: widget.order.receivedAmount,
+                      returnedAmount: widget.order.returnedAmount,
+                      timestamp: widget.order.timestamp,
+                      inventoryDeducted: widget.order.inventoryDeducted,
+                      firebaseSynced: true, // <-- reserve immediately
+                    );
+
+                    await historyBox.add(orderForHistory);
+
+                    // Sync
+
+                    try {
+                       uploadSalesSummary(
+                        orderForHistory,
+                        widget.hotelName,
+                      );
+
+                      orderForHistory.firebaseSynced = true;
+                      await orderForHistory.save();
+                    } catch (e) {
+                      orderForHistory.firebaseSynced = false;
+                      await orderForHistory.save();
+                    }
+                    // Print
+                    try {
+                      await printReceipt(
+                        order: widget.order,
+                        status: "PAID",
+                      );
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              "Order saved successfully. Printer failed: $e",
+                            ),
+                          ),
+                        );
+                      }
+                    }
+
+                    // Close dialog LAST
+                    if (mounted) {
+                      Navigator.pop(context);
+                      Navigator.pop(context);
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("Order Paid"),
+                        ),
+                      );
+                    }
+                  } finally {
+                    if (mounted) {
+                      setState(() {
+                        isProcessing = false;
+                      });
+                    }
+                  }
+                },
+                child: isProcessing
+                    ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+                    : const Text(
                   "Confirm",
-                  style: TextStyle(color: Colors.white),
+                  style: TextStyle(
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
@@ -1469,8 +1923,6 @@ class _OrderDetailState extends State<OrderDetail> {
         );
       },
     );
-
-
   }
 
 
@@ -1491,12 +1943,15 @@ class _OrderDetailState extends State<OrderDetail> {
   }
 
 
-
   Future<void> printReceipt({
     String status = "UNPAID",
     required Order order,
-  }) async {
+  })
 
+
+
+
+  async {
     String hotelName = savedHotelName.isNotEmpty
         ? savedHotelName
         : widget.hotelName;
@@ -1506,15 +1961,21 @@ class _OrderDetailState extends State<OrderDetail> {
     String phone = savedPhone;
 
     await printLanRaw(
-      widget.order.items
-          .map(
-            (e) => {
+      widget.order.items.map((e) {
+        return {
           "name": e.name,
           "qty": e.qty,
           "price": e.price,
-        },
-      )
-          .toList(),
+          "items": e.items == null
+              ? null
+              : e.items!.map((d) {
+            return {
+              "name": d["name"],
+              "qty": d["qty"],
+            };
+          }).toList(),
+        };
+      }).toList(),
 
       hotelName,
       widget.order.orderType,
@@ -1533,14 +1994,8 @@ class _OrderDetailState extends State<OrderDetail> {
       status,
     );
   }
-  Future<void> printLanRaw(
 
-
-
-
-
-
-      List<Map<String, dynamic>> cart,
+  Future<void> printLanRaw(List<Map<String, dynamic>> cart,
       String hotelName,
       String selectedOrderType,
       double subTotal,
@@ -1552,9 +2007,7 @@ class _OrderDetailState extends State<OrderDetail> {
       String discountPercent,
       String address,
       String phone,
-      String status,
-      )
-
+      String status,)
   async {
     final profile = await CapabilityProfile.load();
     final generator = Generator(PaperSize.mm80, profile);
@@ -1573,12 +2026,9 @@ class _OrderDetailState extends State<OrderDetail> {
     );
 
 
-
-
-
-
-
-    if (address.trim().isNotEmpty) {
+    if (address
+        .trim()
+        .isNotEmpty) {
       bytes += generator.text(
         address.trim(),
         styles: const PosStyles(
@@ -1586,16 +2036,6 @@ class _OrderDetailState extends State<OrderDetail> {
         ),
       );
     }
-
-
-
-
-
-
-
-
-
-
 
 
     if (phone.isNotEmpty) {
@@ -1620,6 +2060,68 @@ class _OrderDetailState extends State<OrderDetail> {
       styles: const PosStyles(align: PosAlign.center),
     );
 
+
+
+if (selectedOrderType == "Delivery") {
+  bytes += generator.hr();
+
+  bytes += generator.text(
+    "Customer: ${widget.order.customerName ?? ''}",
+    styles: const PosStyles(align: PosAlign.left),
+  );
+
+  bytes += generator.text(
+    "Phone: ${widget.order.customerPhone ?? ''}",
+    styles: const PosStyles(align: PosAlign.left),
+  );
+
+  bytes += generator.text(
+    "Address: ${widget.order.customerAddress ?? ''}",
+    styles: const PosStyles(align: PosAlign.left),
+  );
+
+  bytes += generator.feed(1);
+
+  bytes += generator.text(
+    "Rider: ${widget.order.riderName ?? ''}",
+    styles: const PosStyles(align: PosAlign.left),
+  );
+
+  bytes += generator.text(
+    "Rider Phone: ${widget.order.riderPhone ?? ''}",
+    styles: const PosStyles(align: PosAlign.left),
+  );
+
+  bytes += generator.hr();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     final now = DateTime.now();
     int hour = now.hour;
     String period = "AM";
@@ -1632,7 +2134,9 @@ class _OrderDetailState extends State<OrderDetail> {
     }
 
     bytes += generator.text(
-      "${now.day}-${now.month}-${now.year} $hour:${now.minute.toString().padLeft(2, '0')} $period",
+      "${now.day}-${now.month}-${now.year} $hour:${now.minute
+          .toString()
+          .padLeft(2, '0')} $period",
       styles: const PosStyles(align: PosAlign.center),
     );
 
@@ -1649,6 +2153,7 @@ class _OrderDetailState extends State<OrderDetail> {
 
     final Map<String, Map<String, dynamic>> groupedItems = {};
 
+
     for (var item in cart) {
       String name = item["name"].toString();
 
@@ -1660,13 +2165,8 @@ class _OrderDetailState extends State<OrderDetail> {
           "qty": item["qty"],
           "price": item["price"],
         };
-
-
-
       }
     }
-
-
 
 
     bytes += generator.row([
@@ -1698,25 +2198,121 @@ class _OrderDetailState extends State<OrderDetail> {
 
     bytes += generator.hr();
 
-  for (var item in groupedItems.values)  {
+// 1️⃣ FIRST: GROUP NORMAL ITEMS + COMBINE QTY + MERGE DEAL ITEMS
+    Map<String, Map<String, dynamic>> grouped = {};
+
+    for (var item in cart) {
+      final name = item["name"]?.toString() ?? "";
+      final qty = (item["qty"] ?? 1);
+
+      if (grouped.containsKey(name)) {
+        grouped[name]!["qty"] += qty;
+      } else {
+        grouped[name] = {
+          "name": name,
+          "qty": qty,
+          "price": item["price"] ?? 0,
+          "items": item["items"], // 👈 deal items bhi store
+        };
+      }
+    }
+    for (var item in grouped.values) {
+
+      final name = item["name"];
+      final qty = item["qty"];
+      final price = (item["price"] ?? 0) * qty;
+
+      // ================= MAIN ITEM =================
       bytes += generator.row([
         PosColumn(
-          text: item["name"].toString(),
+          text: name.toString(),
           width: 7,
-          styles: PosStyles(align: PosAlign.left),
+          styles: const PosStyles(align: PosAlign.left),
         ),
         PosColumn(
-          text: "${item["qty"]}",
+          text: "$qty",
           width: 2,
-          styles: PosStyles(align: PosAlign.center),
+          styles: const PosStyles(align: PosAlign.center),
         ),
         PosColumn(
-          text: "${(item["price"] * item["qty"]).toInt()}",
+          text: "${price.toInt()}",
           width: 3,
-          styles: PosStyles(align: PosAlign.right),
+          styles: const PosStyles(align: PosAlign.right),
         ),
       ]);
+
+      // ================= DEAL ITEMS =================
+      final rawDeal = item["items"];
+
+      List<Map<String, dynamic>> dealItems = [];
+
+      if (rawDeal is List) {
+        dealItems = rawDeal
+            .where((e) => e != null)
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+
+      if (rawDeal is String) {
+        try {
+          final decoded = jsonDecode(rawDeal);
+          if (decoded is List) {
+            dealItems = decoded
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          }
+        } catch (_) {}
+      }
+
+      // 🔥 IMPORTANT FIX: DEAL ITEMS PRINT WITH MULTIPLY QTY
+      for (var d in dealItems) {
+        final dName = d["name"] ?? "";
+        final dQty = (d["qty"] ?? 1) * qty; // 👈 MAIN FIX
+
+        bytes += generator.row([
+          PosColumn(
+            text: "   • $dName",
+            width: 7,
+            styles: const PosStyles(align: PosAlign.left),
+          ),
+          PosColumn(
+            text: "$dQty",
+            width: 2,
+            styles: const PosStyles(align: PosAlign.center),
+          ),
+          PosColumn(text: "", width: 3),
+        ]);
+      }
     }
+
+
+
+
+
+
+
+
+
+
+    // for (var item in groupedItems.values) {
+    //   bytes += generator.row([
+    //     PosColumn(
+    //       text: item["name"].toString(),
+    //       width: 7,
+    //       styles: PosStyles(align: PosAlign.left),
+    //     ),
+    //     PosColumn(
+    //       text: "${item["qty"]}",
+    //       width: 2,
+    //       styles: PosStyles(align: PosAlign.center),
+    //     ),
+    //     PosColumn(
+    //       text: "${(item["price"] * item["qty"]).toInt()}",
+    //       width: 3,
+    //       styles: PosStyles(align: PosAlign.right),
+    //     ),
+    //   ]);
+    // }
 
     bytes += generator.hr();
 
@@ -1773,7 +2369,6 @@ class _OrderDetailState extends State<OrderDetail> {
         ),
       ]);
     }
-
 
 
     bytes += generator.hr();
@@ -1847,7 +2442,6 @@ class _OrderDetailState extends State<OrderDetail> {
     );
 
 
-
     bytes += generator.feed(1);
 
 
@@ -1882,9 +2476,10 @@ class _OrderDetailState extends State<OrderDetail> {
   }
 
 
-
-
   Future<void> _sendToPrinter(List<int> bytes) async {
+
+
+
     try {
       final prefs = await SharedPreferences.getInstance();
       String ip = prefs.getString("printer_ip") ?? "";
@@ -1901,7 +2496,7 @@ class _OrderDetailState extends State<OrderDetail> {
         socket = await Socket.connect(
           ip,
           9100,
-          timeout: const Duration(seconds: 5),
+          timeout: const Duration(seconds: 2),
         );
       } catch (e) {
         _showSnack("❌ Printer not connected");
@@ -1909,9 +2504,14 @@ class _OrderDetailState extends State<OrderDetail> {
       }
 
       try {
+
+
+
+
+
         socket.add(bytes);
         await socket.flush();
-        await Future.delayed(const Duration(milliseconds: 400));
+        await Future.delayed(const Duration(milliseconds: 100));
         socket.destroy();
 
         _showSnack("✅ Printed successfully");
@@ -1922,6 +2522,7 @@ class _OrderDetailState extends State<OrderDetail> {
       _showSnack("❌ Unexpected error");
     }
   }
+
   Future<String> getPrinterIp() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString("printer_ip") ?? "192.168.0.142";
@@ -1936,7 +2537,9 @@ class _OrderDetailState extends State<OrderDetail> {
     );
   }
 
-  Future<void> printDrinksToken() async {
+  Future<void> printDrinksToken()
+
+  async {
     final drinksItems = widget.order.items.where((item) {
       return [
         "Pepsi",
@@ -1949,71 +2552,47 @@ class _OrderDetailState extends State<OrderDetail> {
     }).toList();
 
     if (drinksItems.isEmpty) return;
-
-
   }
 
+  Future<void> printToken() async {
+    for (var item in widget.order.items) {
+      print("DEBUG ITEM => ${item.name}");
+      print("TOKEN CATEGORY => ${item
+          .tokenCategory}");
+    }
 
+    if (widget.order.items.length <= widget.order.lastPrintedCount) {
+      _showSnack("No New Items");
+      return;
+    }
 
-  Future<void> printCategoryTokens() async {
-
-    final Map<String, String> itemCategories = {
-
-      // Drinks
-      "Drink 1.5 liter": "Drinks",
-      "Small Water": "Drinks",
-      "Can": "Drinks",
-      "Juice": "Drinks",
-      "Tea": "Drinks",
-      "Coffee": "Drinks",
-
-      // BBQ
-      "Chicken Piece": "BBQ",
-      "Chicken Tikka": "BBQ",
-      "Malai Boti": "BBQ",
-
-      // Kitchen
-      "Chicken Karahi": "Kitchen",
-      "Chicken Sajji": "Kitchen",
-      "Biryani": "Kitchen",
-    };
+    final newItems = widget.order.items.sublist(widget.order.lastPrintedCount);
 
     Map<String, List<OrderItem>> groupedItems = {};
 
-    for (var item in widget.order.items) {
+    for (var item in newItems) {
 
-      String category =
-          itemCategories[item.name] ?? "Kitchen";
+      // 🔥 FIX: DIRECT FIELD USE
+      String category = item.tokenCategory ?? "Kitchen";
 
-      groupedItems.putIfAbsent(
-        category,
-            () => [],
-      );
-
+      groupedItems.putIfAbsent(category, () => []);
       groupedItems[category]!.add(item);
     }
 
     for (var entry in groupedItems.entries) {
-
-      await printSingleCategoryToken(
-        entry.key,
-        entry.value,
-      );
-
-      await Future.delayed(
-        const Duration(milliseconds: 500),
-      );
+      await printSingleCategoryToken(entry.key, entry.value);
     }
-  }
 
+    widget.order.lastPrintedCount = widget.order.items.length;
+    await widget.order.save();
+
+    _showSnack("Token Printed");
+  }
 
   Future<void> printSingleCategoryToken(
       String category,
       List<OrderItem> items,
-      )
-  async
-  {
-
+      ) async {
     final profile = await CapabilityProfile.load();
     final generator = Generator(PaperSize.mm80, profile);
 
@@ -2021,6 +2600,49 @@ class _OrderDetailState extends State<OrderDetail> {
 
     final now = DateTime.now();
 
+    String orderType =
+    (widget.order.orderType ?? "DINE IN").toUpperCase();
+
+    // 🔥 HEADER
+    bytes += generator.text(
+      orderType,
+      styles: const PosStyles(
+        align: PosAlign.center,
+        bold: true,
+      ),
+    );
+
+    bytes += generator.text(
+      category.toUpperCase(),
+      styles: const PosStyles(
+        align: PosAlign.center,
+        bold: true,
+      ),
+    );
+
+    bytes += generator.text(
+      "ORDER #${widget.order.orderId}",
+      styles: const PosStyles(
+        align: PosAlign.center,
+      ),
+    );
+
+    bytes += generator.hr();
+
+    // 🔥 TABLE INFO
+    bytes += generator.row([
+      PosColumn(
+        text: "Floor: ${widget.order.floorNumber ?? "-"}",
+        width: 6,
+      ),
+      PosColumn(
+        text: "Table: ${widget.order.tableNumber ?? "-"}",
+        width: 6,
+        styles: const PosStyles(align: PosAlign.right),
+      ),
+    ]);
+
+    // 🔥 TIME FORMAT (12-hour AM/PM FIX)
     int hour = now.hour;
     String period = "AM";
 
@@ -2032,62 +2654,9 @@ class _OrderDetailState extends State<OrderDetail> {
     if (hour == 0) {
       hour = 12;
     }
-    String orderType =
-    (widget.order.orderType ?? "DINE IN").toUpperCase();
-    bytes += generator.hr();
 
-
-    bytes += generator.text(
-      orderType,
-      styles: const PosStyles(
-        align: PosAlign.center,
-        bold: true,
-        height: PosTextSize.size2,
-        width: PosTextSize.size2,
-      ),
-    );
-
-    bytes += generator.hr();
-
-    bytes += generator.text(
-      category.toUpperCase(),
-      styles: const PosStyles(
-        align: PosAlign.center,
-        bold: true,
-        height: PosTextSize.size2,
-        width: PosTextSize.size2,
-      ),
-    );
-
-
-    bytes += generator.hr();
-
-    bytes += generator.text(
-      "ORDER #${widget.order.orderId}",
-      styles: const PosStyles(
-        align: PosAlign.center,
-        bold: true,
-        height: PosTextSize.size2,
-      ),
-    );
-
-    bytes += generator.hr();
-
-    bytes += generator.row([
-      PosColumn(
-        text: "Floor: ${widget.order.floorNumber ?? "-"}",
-        width: 6,
-        styles: const PosStyles(bold: true),
-      ),
-      PosColumn(
-        text: "Table: ${widget.order.tableNumber ?? "-"}",
-        width: 6,
-        styles: const PosStyles(
-          bold: true,
-          align: PosAlign.right,
-        ),
-      ),
-    ]);
+    String time =
+        "$hour:${now.minute.toString().padLeft(2, '0')} $period";
 
     bytes += generator.row([
       PosColumn(
@@ -2095,27 +2664,25 @@ class _OrderDetailState extends State<OrderDetail> {
         width: 6,
       ),
       PosColumn(
-        text:
-        "$hour:${now.minute.toString().padLeft(2, '0')} $period",
+        text: time,
         width: 6,
-        styles: const PosStyles(
-          align: PosAlign.right,
-        ),
+        styles: const PosStyles(align: PosAlign.right),
       ),
     ]);
 
     bytes += generator.hr();
 
+    // 🔥 ITEM HEADER
     bytes += generator.row([
       PosColumn(
         text: "Item",
-        width: 9,
-        styles: PosStyles(bold: true),
+        width: 3,
+        styles: const PosStyles(bold: true),
       ),
       PosColumn(
         text: "Qty",
-        width: 3,
-        styles: PosStyles(
+        width: 9,
+        styles: const PosStyles(
           bold: true,
           align: PosAlign.right,
         ),
@@ -2124,18 +2691,22 @@ class _OrderDetailState extends State<OrderDetail> {
 
     bytes += generator.hr();
 
+    // 🔥 ITEMS
     for (var item in items) {
       bytes += generator.row([
         PosColumn(
           text: item.name,
-          width: 9,
+          width: 8,
+          styles: const PosStyles(
+            align: PosAlign.left,
+          ),
         ),
         PosColumn(
           text: "${item.qty}",
-          width: 3,
+          width: 4,
           styles: const PosStyles(
-            align: PosAlign.right,
             bold: true,
+            align: PosAlign.right,
           ),
         ),
       ]);
@@ -2143,112 +2714,45 @@ class _OrderDetailState extends State<OrderDetail> {
 
     bytes += generator.hr();
 
-    int totalQty = 0;
-
-    for (var item in items) {
-      totalQty += item.qty;
-    }
+    // 🔥 TOTAL
+    int totalQty = items.fold(0, (sum, item) => sum + item.qty);
 
     bytes += generator.row([
       PosColumn(
-        text: "Total Items",
+        text: "TOTAL",
         width: 8,
-        styles: const PosStyles(
-          bold: true,
-        ),
+        styles: const PosStyles(bold: true),
       ),
       PosColumn(
         text: "$totalQty",
         width: 4,
         styles: const PosStyles(
-          bold: true,
           align: PosAlign.right,
-          height: PosTextSize.size2,
-          width: PosTextSize.size2,
+          bold: true,
         ),
       ),
     ]);
 
-    bytes += generator.hr();
-
-    bytes += generator.feed(2);
+    bytes += generator.feed(1);
     bytes += generator.cut();
 
+    try {
+      await _sendToPrinter(bytes);
+    } catch (e) {
+      print("Printer error but ignored: $e");
+    }
 
-
-    await _sendToPrinter(bytes);
-
-    await saveTokenHistory(
-      category,
-      items,
-    );
+    await saveTokenHistory(category, items);
   }
 
 
-  Future<void> printToken() async {
-
-    if (widget.order.items.length <=
-        widget.order.lastPrintedCount) {
-
-      _showSnack("No New Items");
-      return;
-    }
-
-    final newItems = widget.order.items.sublist(
-      widget.order.lastPrintedCount,
-    );
-
-    Map<String, List<OrderItem>> groupedItems = {};
-
-    final Map<String, String> itemCategories = {
-
-      "Can": "Drinks",
-      "Drink 1.5 liter": "Drinks",
-      "Small Water": "Drinks",
-      "Juice": "Drinks",
-
-      "Chicken Piece": "BBQ",
-      "Chicken Tikka": "BBQ",
-
-      "Chicken Karahi Full": "Kitchen",
-      "Afaq Special Chicken Sajji": "Kitchen",
-    };
-
-    for (var item in newItems) {
-
-      String category =
-          itemCategories[item.name] ?? "Kitchen";
-
-      groupedItems.putIfAbsent(
-        category,
-            () => [],
-      );
-
-      groupedItems[category]!.add(item);
-    }
-
-    for (var entry in groupedItems.entries) {
-
-      await printSingleCategoryToken(
-        entry.key,
-        entry.value,
-      );
-    }
-
-    widget.order.lastPrintedCount =
-        widget.order.items.length;
-
-    await widget.order.save();
-
-    _showSnack("Token Printed");
-  }
 
 
-  Future<void> saveTokenHistory(
-      String category,
-      List<OrderItem> items,
-      ) async {
 
+
+  Future<void> saveTokenHistory(String category,
+      List<OrderItem> items,)
+  async {
     final box =
     await Hive.openBox<TokenHistory>("tokenHistory");
 
@@ -2269,4 +2773,149 @@ class _OrderDetailState extends State<OrderDetail> {
     );
   }
 
+  void editCustomerDetails() {
+    TextEditingController nameController =
+    TextEditingController(text: widget.order.customerName ?? "");
+    TextEditingController phoneController =
+    TextEditingController(text: widget.order.customerPhone ?? "");
+    TextEditingController addressController =
+    TextEditingController(text: widget.order.customerAddress ?? "");
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Edit Customer Details"),
+
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: "Name"),
+              ),
+              TextField(
+                controller: phoneController,
+                decoration: const InputDecoration(labelText: "Phone"),
+              ),
+              TextField(
+                controller: addressController,
+                decoration: const InputDecoration(labelText: "Address"),
+              ),
+            ],
+          ),
+
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel"),
+            ),
+
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  widget.order.customerName = nameController.text;
+                  widget.order.customerPhone = phoneController.text;
+                  widget.order.customerAddress = addressController.text;
+                });
+
+                Navigator.pop(context);
+              },
+              child: const Text("Save"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void editRiderDetails() {
+    TextEditingController nameController =
+    TextEditingController(text: widget.order.riderName ?? "");
+    TextEditingController phoneController =
+    TextEditingController(text: widget.order.riderPhone ?? "");
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Edit Rider Details"),
+
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: "Rider Name"),
+              ),
+              TextField(
+                controller: phoneController,
+                decoration: const InputDecoration(labelText: "Rider Phone"),
+              ),
+            ],
+          ),
+
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel"),
+            ),
+
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  widget.order.riderName = nameController.text;
+                  widget.order.riderPhone = phoneController.text;
+                });
+
+                Navigator.pop(context);
+              },
+              child: const Text("Save"),
+            ),
+          ],
+        );
+      },
+    );
+  }}
+
+
+
+Future<void> uploadSalesSummary(Order order, String hotelName) async {
+  try {
+    final db = FirebaseDatabase.instance.ref();
+
+    final now = DateTime.now();
+
+    final day =
+        "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+    final month =
+        "${now.year}-${now.month.toString().padLeft(2, '0')}";
+
+    // Daily Summary
+    await db
+        .child("Restaurant/$hotelName/Sales/Daily/$day")
+        .update({
+      "sale": ServerValue.increment(order.grandTotal),
+      "service": ServerValue.increment(order.service),
+      "tax": ServerValue.increment(order.tax),
+      "orders": ServerValue.increment(1),
+    });
+
+    // Monthly Summary
+    await db
+        .child("Restaurant/$hotelName/Sales/Monthly/$month")
+        .update({
+      "sale": ServerValue.increment(order.grandTotal),
+      "service": ServerValue.increment(order.service),
+      "tax": ServerValue.increment(order.tax),
+      "orders": ServerValue.increment(1),
+    });
+
+    debugPrint("✅ Sales Summary Uploaded");
+  } catch (e) {
+    debugPrint("❌ uploadSalesSummary Error: $e");
+    rethrow;
+  }
 }
+

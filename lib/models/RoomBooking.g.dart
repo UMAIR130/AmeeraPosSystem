@@ -22,9 +22,11 @@ class RoomBookingAdapter extends TypeAdapter<RoomBooking> {
       customerName: fields[2] as String?,
       cnic: fields[3] as String?,
       advance: fields[4] as int?,
-      days: fields[5] as int?,
       checkIn: fields[14] as String?,
+      checkOut: fields[15] as String?,
+      dailyRent: fields[16] as int?,
     )
+      ..days = fields[5] as int?
       ..customerPhone = fields[6] as String?
       ..address = fields[7] as String?
       ..carNumber = fields[8] as String?
@@ -38,7 +40,7 @@ class RoomBookingAdapter extends TypeAdapter<RoomBooking> {
   @override
   void write(BinaryWriter writer, RoomBooking obj) {
     writer
-      ..writeByte(15)
+      ..writeByte(17)
       ..writeByte(0)
       ..write(obj.roomName)
       ..writeByte(1)
@@ -68,7 +70,11 @@ class RoomBookingAdapter extends TypeAdapter<RoomBooking> {
       ..writeByte(13)
       ..write(obj.stayType)
       ..writeByte(14)
-      ..write(obj.checkIn);
+      ..write(obj.checkIn)
+      ..writeByte(15)
+      ..write(obj.checkOut)
+      ..writeByte(16)
+      ..write(obj.dailyRent);
   }
 
   @override

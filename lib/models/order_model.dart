@@ -1,6 +1,6 @@
 import 'package:hive/hive.dart';
 
-part 'order_model.g.dart'; // 🔹 Ye file generate hogi
+part 'order_model.g.dart';
 
 @HiveType(typeId: 1)
 class OrderItem extends HiveObject {
@@ -13,7 +13,24 @@ class OrderItem extends HiveObject {
   @HiveField(2)
   double price;
 
-  OrderItem({required this.name, required this.qty, required this.price});
+  // 🆕 DEAL / SUB ITEMS SUPPORT
+
+  @HiveField(3)
+  List<Map<String, dynamic>>? items;
+ // List<Map>? items;
+
+
+  @HiveField(4)
+  String? tokenCategory;
+
+  OrderItem({
+    required this.name,
+    required this.qty,
+    required this.price,
+    this.items,
+    this.tokenCategory,
+
+  });
 }
 
 @HiveType(typeId: 13)
@@ -48,18 +65,17 @@ class Order extends HiveObject {
   @HiveField(9)
   DateTime timestamp;
 
-  // 🔹 New Fields
   @HiveField(10)
-  String status; // pending / paid / completed
+  String status;
 
   @HiveField(11)
-  String? paymentMethod; // Cash / JazzCash / Easypaisa / Bank
+  String? paymentMethod;
 
   @HiveField(12)
-  double? receivedAmount; // only for cash
+  double? receivedAmount;
 
   @HiveField(13)
-  double? returnedAmount; // only for cash
+  double? returnedAmount;
 
   @HiveField(14)
   double tax;
@@ -70,14 +86,32 @@ class Order extends HiveObject {
   @HiveField(16)
   String? orderNumber;
 
-
   @HiveField(17)
   String? customerName;
-
 
   @HiveField(18)
   String? customerPhone;
 
+  // 🆕 DELIVERY FIELDS
+  @HiveField(19)
+  String? customerAddress;
+
+  @HiveField(20)
+  String? riderName;
+
+  @HiveField(21)
+  String? riderPhone;
+
+  @HiveField(22)
+  bool inventoryDeducted;
+
+
+  @HiveField(23)
+  bool firebaseSynced;
+
+
+  @HiveField(24)
+  String hotelName;
 
   Order({
     required this.orderId,
@@ -90,7 +124,7 @@ class Order extends HiveObject {
     required this.discount,
     required this.grandTotal,
     required this.timestamp,
-    this.status = "pending", // default pending
+    this.status = "pending",
     this.paymentMethod,
     this.receivedAmount,
     this.returnedAmount,
@@ -99,5 +133,11 @@ class Order extends HiveObject {
     this.orderNumber,
     this.customerName,
     this.customerPhone,
+    this.customerAddress,
+    this.riderName,
+    this.riderPhone,
+    this.inventoryDeducted = false,
+    this.firebaseSynced = false,
+    required this.hotelName,
   });
 }

@@ -1,11 +1,15 @@
 import 'dart:io';
 
+import 'package:demoproject/SplashScreen.dart';
 import 'package:demoproject/inventory/models/TokenHistory.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:path_provider/path_provider.dart';
 import 'firebase_options.dart'; // auto generated
+import 'inventory/models/InventoryHistory.dart';
 import 'inventory/models/InventoryItem.dart';
 import 'inventory/models/MenuRecipe.dart';
 import 'inventory/models/RecipeIngredient.dart';
@@ -34,10 +38,17 @@ Future<void> main() async {
   // Firebase initialize
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
-  );
 
+  );
+  FirebaseDatabase.instance.setPersistenceEnabled(true);
   // Hive initialize
   await Hive.initFlutter();
+  //
+  // final appDir = await getApplicationSupportDirectory();
+  //
+  // await Hive.initFlutter(appDir.path);
+  //
+  // print("Hive Path : ${appDir.path}");
 
   // Hive adapters register
   Hive.registerAdapter(OrderItemAdapter());
@@ -50,6 +61,7 @@ Future<void> main() async {
   Hive.registerAdapter(RecipeIngredientAdapter());
   Hive.registerAdapter(MenuRecipeAdapter());
   Hive.registerAdapter(TokenHistoryAdapter());
+  Hive.registerAdapter(InventoryHistoryAdapter());
 
 
 
@@ -62,6 +74,9 @@ Future<void> main() async {
   await Hive.openBox<InventoryItem>('inventory');
   await Hive.openBox<MenuRecipe>('recipes');
   await Hive.openBox<TokenHistory>('tokenHistory');
+  await Hive.openBox('token_categories');
+  Hive.openBox<InventoryHistory>('inventory_history');
+
 
 
   runApp(const MyApp());
@@ -77,7 +92,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
       ),
-      home: const Login(),
+      home: const SplashScreen(),
     );
   }
 }

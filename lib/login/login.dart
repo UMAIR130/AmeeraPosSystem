@@ -21,13 +21,7 @@ class _LoginState extends State<Login> {
 
   bool isPasswordVisible = false;
   bool isLoading = false;
-  // bool firebaseInitialized = false;
 
-  // @override
-  // void initState() {
-  //   super.initState();
-  //   initializeFirebase();
-  // }
   @override
   void initState() {
     super.initState();
@@ -37,14 +31,8 @@ class _LoginState extends State<Login> {
     });
   }
 
-  // Future<void> initializeFirebase() async {
-  //   await Firebase.initializeApp(
-  //     options: DefaultFirebaseOptions.currentPlatform,
-  //   );
-  //
-  //   setState(() => firebaseInitialized = true);
-  //   checkAutoLogin();
-  // }
+
+
 
   // ================= GET USER DATA =================
   Future<Map<String, dynamic>> getUserData(String uid) async {
@@ -73,44 +61,38 @@ class _LoginState extends State<Login> {
 
   // ================= AUTO LOGIN =================
   Future<void> checkAutoLogin() async {
-    try {
-      User? user = FirebaseAuth.instance.currentUser;
+    final prefs = await SharedPreferences.getInstance();
 
-      final prefs = await SharedPreferences.getInstance();
+    final isLoggedIn = prefs.getBool("isLoggedIn") ?? false;
+    final role = prefs.getString("role");
+    final hotelName = prefs.getString("hotelName") ?? "";
 
-      if (user == null) {
-        return;
-      }
+    if (!isLoggedIn || role == null || role.isEmpty) return;
 
-      String? hotelName = prefs.getString("hotelName");
-      String? role = prefs.getString("role");
+    if (!mounted) return;
 
-      if (hotelName == null || role == null) {
-        await prefs.clear();
-        return;
-      }
+    Future.microtask(() {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => role == 'owner'
+              ? Ownerdashboard(hotelName: hotelName)
+              : Dashboard(hotelName: hotelName),
+        ),
+      );
+    });
+  }
 
-      if (!mounted) return;
 
-      if (role == 'owner') {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => Ownerdashboard(hotelName: hotelName),
-          ),
-        );
-      } else {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => Dashboard(hotelName: hotelName),
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint("Auto Login Error: $e");
-    }
-  }  // ================= LOGIN =================
+
+
+
+
+
+
+
+
+  // ================= LOGIN =================
   Future<void> loginUser() async {
     if (isLoading) return; // prevent double click
     if (!formKey.currentState!.validate()) return;

@@ -41,6 +41,8 @@ class RoomHistory extends HiveObject {
   @HiveField(11)
   String? checkOut;
 
+  @HiveField(12)
+  int refund;
 
 
   RoomHistory({
@@ -56,5 +58,6 @@ class RoomHistory extends HiveObject {
     this.stayType,
     this.checkIn,
     this.checkOut,
+    this.refund = 0,
   });
 }

@@ -1,13 +1,19 @@
 import 'dart:io';
 
 import 'package:esc_pos_utils/esc_pos_utils.dart';
+import 'package:excel/excel.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../inventory/models/TokenHistory.dart';
 import '../models/order_model.dart';
+import 'TokenHistoryScreen.dart';
 
 class OrderHistory extends StatefulWidget {
   final String hotelName;
@@ -16,6 +22,19 @@ class OrderHistory extends StatefulWidget {
 
   @override
   State<OrderHistory> createState() => _OrderHistoryState();
+}
+
+
+
+Future<bool> requestStoragePermission() async {
+
+  if (Platform.isWindows) {
+    return true;
+  }
+
+  var status = await Permission.storage.request();
+
+  return status.isGranted;
 }
 
 
@@ -29,7 +48,68 @@ String formatNumber(double value) {
 
 class _OrderHistoryState extends State<OrderHistory> {
   DateTime? selectedDate;
+  DateTime? customStartDate;
+  DateTime? customEndDate;
+  String selectedExport = "Today";
+  String hotel = "";
+  String address = "";
+  String phone = "";
+  bool hotelLoaded = false;
 
+
+  @override
+  void initState() {
+    super.initState();
+
+    hotel = widget.hotelName;
+
+    loadHotelInfo();
+  }
+
+
+
+  Future<void> loadHotelInfo() async {
+
+    try {
+
+      final ref = FirebaseDatabase.instance
+          .ref("Restaurant/${widget.hotelName}/Users");
+
+      final snapshot = await ref.get();
+
+      if (snapshot.exists && snapshot.value != null) {
+
+        final usersMap =
+        Map<String, dynamic>.from(snapshot.value as Map);
+
+        if (usersMap.isNotEmpty) {
+
+          final data =
+          Map<String, dynamic>.from(usersMap.values.first);
+
+          hotel = data["HotelName"] ?? widget.hotelName;
+          address = data["address"] ?? "";
+          phone = data["phone"] ?? "";
+        }
+      }
+
+    } catch (e) {
+
+      print("Hotel Info Error : $e");
+
+      hotel = widget.hotelName;
+      address = "";
+      phone = "";
+
+    }
+
+    if (mounted) {
+      setState(() {
+        hotelLoaded = true;
+      });
+    }
+
+  }
   @override
   Widget build(BuildContext context) {
     final box = Hive.box<Order>('orders_history');
@@ -126,56 +206,156 @@ class _OrderHistoryState extends State<OrderHistory> {
                       ],
                     ),
                     // CENTER - Date Picker
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.date_range),
-                      label: Text(selectedDate != null
-                          ? DateFormat('dd-MM-yyyy').format(selectedDate!)
-                          : "Select Date"),
-                      onPressed: () async {
-                        DateTime? picked = await showDatePicker(
-                          context: context,
-                          initialDate: selectedDate ?? DateTime.now(),
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime.now(),
-                        );
-                        if (picked != null) {
-                          setState(() {
-                            selectedDate = picked;
-                          });
-                        }
-                      },
+
+// CENTER - Buttons
+                    Row(
+                      children: [
+
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.date_range),
+                          label: Text(
+                            selectedDate != null
+                                ? DateFormat('dd-MM-yyyy').format(selectedDate!)
+                                : "Select Date",
+                          ),
+                          onPressed: () async {
+                            DateTime? picked = await showDatePicker(
+                              context: context,
+                              initialDate: selectedDate ?? DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime.now(),
+                            );
+
+                            if (picked != null) {
+                              setState(() {
+                                selectedDate = picked;
+                              });
+                            }
+                          },
+                        ),
+
+                        const SizedBox(width: 10),
+
+
+
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.table_view),
+                          label: const Text("Excel"),
+                          onPressed: () async {
+
+                            bool allowed = await requestStoragePermission();
+
+                            if (!allowed) {
+
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text("Storage Permission Denied"),
+                                ),
+                              );
+
+                              return;
+                            }
+
+                          //  await exportOrdersToExcel();
+
+                            showExportDialog();
+
+
+                          },
+                        ),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                        // 🔥 TOKEN BUTTON
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.receipt_long),
+                          label: const Text("Tokens"),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const TokenHistoryScreen(),
+                              ),
+                            );
+                          },
+                        ),
+
+                        const SizedBox(width: 10),
+
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.bar_chart),
+                          label: const Text("Report"),
+
+
+                          onPressed: () async {
+
+                            DateTime? picked = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime.now(),
+                            );
+
+                            if (picked == null) return;
+
+                            final box = Hive.box<Order>('orders_history');
+
+                            List<Order> allPaidOrders =
+                            box.values.where((o) => o.status == "paid").toList();
+
+                            List<Order> filteredOrders =
+                            allPaidOrders.where((o) =>
+                            o.timestamp.year == picked.year &&
+                                o.timestamp.month == picked.month &&
+                                o.timestamp.day == picked.day)
+                                .toList();
+
+
+
+
+
+
+
+
+
+
+
+
+
+                            _showDailyReport(filteredOrders, picked);
+                          },
+                        ),
+                      ],
                     ),
 
 
-                    ElevatedButton.icon(
-                      icon: Icon(Icons.bar_chart),
-                      label: Text("Report"),
-                      onPressed: () async {
-
-                        // 🔹 STEP 1: DATE PICKER
-                        DateTime? picked = await showDatePicker(
-                          context: context,
-                          initialDate: DateTime.now(),
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime.now(),
-                        );
-
-                        if (picked == null) return; // cancel
-
-                        // 🔹 STEP 2: FILTER ORDERS
-                        final box = Hive.box<Order>('orders_history');
-
-                        List<Order> allPaidOrders =
-                        box.values.where((o) => o.status == "paid").toList();
-
-                        List<Order> filteredOrders = allPaidOrders.where((o) =>
-                        o.timestamp.year == picked.year &&
-                            o.timestamp.month == picked.month &&
-                            o.timestamp.day == picked.day).toList();
-
-                        // 🔹 STEP 3: SHOW REPORT
-                        _showDailyReport(filteredOrders, selectedDate);                      },
-                    ),
 
                     // RIGHT SIDE - Daily
                     Row(
@@ -392,7 +572,8 @@ class _OrderHistoryState extends State<OrderHistory> {
         ),
       ),
     );
-  }  Widget _summaryRow(String title, double value,
+  }
+  Widget _summaryRow(String title, double value,
       {bool bold = false, bool red = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -743,7 +924,8 @@ class _OrderHistoryState extends State<OrderHistory> {
       String paymentMethod,
       double receivedAmount,
       double changeAmount,
-      ) async {
+      )
+  async {
     // 🧮 Dynamic percentage calculations
     final servicePercent = subTotal > 0 ? (service / subTotal) * 100 : 0;
     final taxPercent = subTotal > 0 ? (tax / subTotal) * 100 : 0;
@@ -798,13 +980,7 @@ class _OrderHistoryState extends State<OrderHistory> {
 
     bytes += generator.hr();
 
-    // 🛒 ITEMS HEADER
-    // bytes += generator.row([
-    //   PosColumn(text: "#", width: 1, styles: PosStyles(bold: true)),
-    //   PosColumn(text: "Item Name", width: 6, styles: PosStyles(bold: true)),
-    //   PosColumn(text: "Qty", width: 2, styles: PosStyles(bold: true)),
-    //   PosColumn(text: "Price", width: 3, styles: PosStyles(bold: true, align: PosAlign.right)),
-    // ]);
+
 
 
 
@@ -1013,25 +1189,6 @@ class _OrderHistoryState extends State<OrderHistory> {
       }
     }
 
-    // 🔥 HOTEL INFO
-    String address = "";
-    String phone = "";
-    String hotel = widget.hotelName;
-
-    final ref = FirebaseDatabase.instance
-        .ref("Restaurant/${widget.hotelName}/Users");
-
-    final snapshot = await ref.get();
-
-    if (snapshot.exists) {
-      final usersMap = Map<String, dynamic>.from(snapshot.value as Map);
-      final firstUser = usersMap.values.first;
-      final data = Map<String, dynamic>.from(firstUser);
-
-      hotel = data["HotelName"] ?? widget.hotelName;
-      address = data["address"] ?? "";
-      phone = data["phone"] ?? "";
-    }
 
     // ✅ FIXED DATE (IMPORTANT)
     final reportDate = selectedDate ?? DateTime.now();
@@ -1225,22 +1382,18 @@ class _OrderHistoryState extends State<OrderHistory> {
                       icon: const Icon(Icons.print),
                       label: const Text("Print"),
                       onPressed: () {
-                        if (selectedDate == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text("Please select a date first"),
-                            ),
-                          );
-                          return;
-                        }
+                        final date = selectedDate ?? DateTime.now();
 
                         _printDailyReport(
                           itemQty,
                           itemTotal,
                           grandTotal,
-                          selectedDate!,
+                          date,
                         );
                       },
+
+
+
                     ),
                     const SizedBox(width: 15),
                     ElevatedButton(
@@ -1264,7 +1417,8 @@ class _OrderHistoryState extends State<OrderHistory> {
       List<Order> allOrders,
       DateTime? selectedDate,
       String type, // "daily" "weekly" "monthly"
-      ) {
+      )
+  {
     DateTime now = selectedDate ?? DateTime.now();
 
     if (type == "daily") {
@@ -1298,7 +1452,8 @@ class _OrderHistoryState extends State<OrderHistory> {
       Map<String, double> total,
       double grandTotal,
       DateTime reportDate,
-      ) async {
+      )
+  async {
 
 
     final info = await getHotelInfo();
@@ -1488,4 +1643,621 @@ class _OrderHistoryState extends State<OrderHistory> {
       "phone": phone,
     };
   }
+
+
+
+  Future<void> showExportDialog() async {
+
+    selectedExport = "Today";
+
+    showDialog(
+      context: context,
+      builder: (context) {
+
+        return StatefulBuilder(
+
+          builder: (dialogContext, setStateDialog) {
+
+            return AlertDialog(
+
+              title: const Text(
+                "Export Excel",
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+
+              content: SizedBox(
+
+                width: 320,
+
+                child: Column(
+
+                  mainAxisSize: MainAxisSize.min,
+
+                  children: [
+
+                    RadioListTile<String>(
+                      title: const Text("Today"),
+                      value: "Today",
+                      groupValue: selectedExport,
+                      onChanged: (v) {
+                        setStateDialog(() {
+                          selectedExport = v!;
+                        });
+                      },
+                    ),
+
+                    RadioListTile<String>(
+                      title: const Text("Yesterday"),
+                      value: "Yesterday",
+                      groupValue: selectedExport,
+                      onChanged: (v) {
+                        setStateDialog(() {
+                          selectedExport = v!;
+                        });
+                      },
+                    ),
+
+                    RadioListTile<String>(
+                      title: const Text("This Week"),
+                      value: "This Week",
+                      groupValue: selectedExport,
+                      onChanged: (v) {
+                        setStateDialog(() {
+                          selectedExport = v!;
+                        });
+                      },
+                    ),
+
+                    RadioListTile<String>(
+                      title: const Text("This Month"),
+                      value: "This Month",
+                      groupValue: selectedExport,
+                      onChanged: (v) {
+                        setStateDialog(() {
+                          selectedExport = v!;
+                        });
+                      },
+                    ),
+
+                    RadioListTile<String>(
+                      title: const Text("Custom Date Range"),
+                      value: "Custom",
+                      groupValue: selectedExport,
+                      onChanged: (v) {
+                        setStateDialog(() {
+                          selectedExport = v!;
+                        });
+                      },
+                    ),
+
+                  ],
+
+                ),
+
+              ),
+
+              actions: [
+
+                TextButton(
+
+                  onPressed: () {
+
+                    Navigator.pop(dialogContext);
+
+                  },
+
+                  child: const Text("Cancel"),
+
+                ),
+
+                ElevatedButton(
+
+                  onPressed: () async {
+
+                    Navigator.pop(dialogContext);
+
+                    await Future.delayed(const Duration(milliseconds: 300));
+
+                    if (selectedExport == "Today") {
+
+                      await exportOrdersToExcel(
+                        filter: "Today",
+                      );
+
+                    } else if (selectedExport == "Yesterday") {
+
+                      await exportOrdersToExcel(
+                        filter: "Yesterday",
+                      );
+
+                    } else if (selectedExport == "This Week") {
+
+                      await exportOrdersToExcel(
+                        filter: "This Week",
+                      );
+
+                    } else if (selectedExport == "This Month") {
+
+                      await exportOrdersToExcel(
+                        filter: "This Month",
+                      );
+
+                    } else {
+
+                      customStartDate = await showDatePicker(
+                        context: this.context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime(2024),
+                        lastDate: DateTime.now(),
+                      );
+
+                      if (customStartDate == null) return;
+
+                      await Future.delayed(const Duration(milliseconds: 200));
+
+                      customEndDate = await showDatePicker(
+                        context: this.context,
+                        initialDate: customStartDate!,
+                        firstDate: customStartDate!,
+                        lastDate: DateTime.now(),
+                      );
+
+                      if (customEndDate == null) return;
+
+                      await exportOrdersToExcel(
+                        filter: "Custom",
+                        startDate: customStartDate,
+                        endDate: customEndDate,
+                      );
+
+                    }
+
+                  },
+                  child: const Text("Next"),
+
+                ),
+
+              ],
+
+            );
+
+          },
+
+        );
+
+      },
+
+    );
+
+  }
+
+  Future<void> exportOrdersToExcel(
+  {
+    required String filter,
+
+    DateTime? startDate,
+
+    DateTime? endDate,
 }
+      )
+
+  async {
+
+    final excel = Excel.createExcel();
+    excel.delete('Sheet1');
+
+    final Sheet sheet = excel['Orders'];
+
+
+    final Sheet summary = excel['Summary'];
+
+    // Header
+    sheet.appendRow([
+      TextCellValue("Order No"),
+      TextCellValue("Date"),
+      TextCellValue("Time"),
+      TextCellValue("Payment"),
+      TextCellValue("Item"),
+      TextCellValue("Qty"),
+      TextCellValue("Unit Price"),
+      TextCellValue("Line Total"),
+      TextCellValue("Subtotal"),
+      TextCellValue("Service"),
+      TextCellValue("Tax"),
+      TextCellValue("Discount"),
+      TextCellValue("Grand Total"),
+    ]);
+    final box = Hive.box<Order>('orders_history');
+
+    List<Order> orders = [];
+
+    final now = DateTime.now();
+
+    switch (filter) {
+
+      case "Today":
+
+        orders = box.values.where((o) {
+
+          return o.timestamp.year == now.year &&
+              o.timestamp.month == now.month &&
+              o.timestamp.day == now.day;
+
+        }).toList();
+
+        break;
+
+      case "Yesterday":
+
+        final yesterday = now.subtract(const Duration(days: 1));
+
+        orders = box.values.where((o) {
+
+          return o.timestamp.year == yesterday.year &&
+              o.timestamp.month == yesterday.month &&
+              o.timestamp.day == yesterday.day;
+
+        }).toList();
+
+        break;
+
+      case "This Week":
+
+        final weekStart =
+        now.subtract(Duration(days: now.weekday - 1));
+
+        orders = box.values.where((o) {
+
+          return o.timestamp.isAfter(
+              weekStart.subtract(const Duration(seconds: 1)))
+              &&
+              o.timestamp.isBefore(
+                  now.add(const Duration(days: 1)));
+
+        }).toList();
+
+        break;
+
+      case "This Month":
+
+        orders = box.values.where((o) {
+
+          return o.timestamp.year == now.year &&
+              o.timestamp.month == now.month;
+
+        }).toList();
+
+        break;
+
+      case "Custom":
+
+        final start = DateTime(
+          startDate!.year,
+          startDate.month,
+          startDate.day,
+        );
+
+        final end = DateTime(
+          endDate!.year,
+          endDate.month,
+          endDate.day,
+          23,
+          59,
+          59,
+        );
+
+        orders = box.values.where((o) {
+
+          final date = DateTime(
+            o.timestamp.year,
+            o.timestamp.month,
+            o.timestamp.day,
+            o.timestamp.hour,
+            o.timestamp.minute,
+            o.timestamp.second,
+          );
+
+          return date.isAtSameMomentAs(start) ||
+              date.isAtSameMomentAs(end) ||
+              (date.isAfter(start) && date.isBefore(end));
+
+        }).toList();
+
+        break;
+
+      default:
+
+        orders = box.values.toList();
+
+    }
+
+
+    print("Export Orders : ${orders.length}");
+
+    if (orders.isEmpty) {
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("No orders found."),
+        ),
+      );
+
+      return;
+    }
+
+
+    double totalSales = 0;
+    double totalTax = 0;
+    double totalService = 0;
+    double totalDiscount = 0;
+
+    double cashSales = 0;
+    double jazzCashSales = 0;
+    double easyPaisaSales = 0;
+    double bankSales = 0;
+
+    Map<String, int> bestSelling = {};
+
+    for (final order in orders) {
+
+
+
+
+      totalSales += order.grandTotal;
+      totalTax += order.tax;
+      totalService += order.service;
+      totalDiscount += order.discount;
+
+      switch (order.paymentMethod) {
+
+        case "Cash":
+          cashSales += order.grandTotal;
+          break;
+
+        case "JazzCash":
+          jazzCashSales += order.grandTotal;
+          break;
+
+        case "EasyPaisa":
+          easyPaisaSales += order.grandTotal;
+          break;
+
+        case "Bank":
+          bankSales += order.grandTotal;
+          break;
+
+      }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      for (final item in order.items) {
+
+
+        bestSelling[item.name] =
+            (bestSelling[item.name] ?? 0) + item.qty;
+
+
+
+        final lineTotal = item.price * item.qty;
+
+        sheet.appendRow([
+
+          TextCellValue(order.orderNumber?.toString() ?? order.orderId),
+
+          TextCellValue(
+            "${order.timestamp.day.toString().padLeft(2, '0')}/"
+                "${order.timestamp.month.toString().padLeft(2, '0')}/"
+                "${order.timestamp.year}",
+          ),
+
+          TextCellValue(
+            "${order.timestamp.hour.toString().padLeft(2, '0')}:"
+                "${order.timestamp.minute.toString().padLeft(2, '0')}",
+          ),
+
+          TextCellValue(order.paymentMethod ?? ""),
+
+          TextCellValue(item.name),
+
+          IntCellValue(item.qty),
+
+          DoubleCellValue(item.price),
+
+          DoubleCellValue(lineTotal),
+
+          DoubleCellValue(order.subTotal),
+
+          DoubleCellValue(order.service),
+
+          DoubleCellValue(order.tax),
+
+          DoubleCellValue(order.discount),
+
+          DoubleCellValue(order.grandTotal),
+
+        ]);
+
+      }
+
+    }
+
+
+
+    String bestItem = "-";
+    int bestQty = 0;
+
+    if (bestSelling.isNotEmpty) {
+
+      final item = bestSelling.entries.reduce(
+            (a, b) => a.value > b.value ? a : b,
+      );
+
+      bestItem = item.key;
+      bestQty = item.value;
+    }
+
+    summary.appendRow([
+      TextCellValue("Restaurant Summary Report"),
+    ]);
+
+    summary.appendRow([]);
+
+    summary.appendRow([
+      TextCellValue("Total Orders"),
+      IntCellValue(orders.length),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("Total Sales"),
+      DoubleCellValue(totalSales),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("Cash Sales"),
+      DoubleCellValue(cashSales),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("JazzCash Sales"),
+      DoubleCellValue(jazzCashSales),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("EasyPaisa Sales"),
+      DoubleCellValue(easyPaisaSales),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("Bank Sales"),
+      DoubleCellValue(bankSales),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("Total Service"),
+      DoubleCellValue(totalService),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("Total Tax"),
+      DoubleCellValue(totalTax),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("Total Discount"),
+      DoubleCellValue(totalDiscount),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("Best Selling Item"),
+      TextCellValue(bestItem),
+    ]);
+
+    summary.appendRow([
+      TextCellValue("Sold Qty"),
+      IntCellValue(bestQty),
+    ]);
+
+
+
+
+
+
+
+
+
+// Delete default Sheet1 if it exists
+    if (excel.tables.containsKey('Sheet1')) {
+      excel.delete('Sheet1');
+    }
+
+// Save Excel
+
+
+
+
+    // Save Excel
+    final bytes = excel.encode();
+
+    if (bytes == null) return;
+
+    final documentsDir = await getApplicationDocumentsDirectory();
+
+    String fileName = "";
+
+    switch (filter) {
+
+      case "Today":
+
+        fileName =
+        "Today_Report_${now.day}-${now.month}-${now.year}.xlsx";
+
+        break;
+
+      case "Yesterday":
+
+        final yesterday = now.subtract(const Duration(days: 1));
+
+        fileName =
+        "Yesterday_Report_${yesterday.day}-${yesterday.month}-${yesterday.year}.xlsx";
+
+        break;
+
+      case "This Week":
+
+        final weekStart =
+        now.subtract(Duration(days: now.weekday - 1));
+
+        fileName =
+        "Week_Report_${weekStart.day}-${weekStart.month}-${weekStart.year}"
+            "_to_${now.day}-${now.month}-${now.year}.xlsx";
+
+        break;
+
+      case "This Month":
+
+        fileName =
+        "Month_Report_${now.month}-${now.year}.xlsx";
+
+        break;
+
+      case "Custom":
+
+        fileName =
+        "Custom_Report_"
+            "${startDate!.day}-${startDate.month}-${startDate.year}"
+            "_to_"
+            "${endDate!.day}-${endDate.month}-${endDate.year}.xlsx";
+
+        break;
+
+      default:
+
+        fileName = "OrderHistory.xlsx";
+
+    }
+
+    final file = File("${documentsDir.path}/$fileName");
+
+    await file.writeAsBytes(bytes, flush: true);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Excel Saved\n${file.path}"),
+      ),
+    );
+
+    await OpenFilex.open(file.path);
+  }}

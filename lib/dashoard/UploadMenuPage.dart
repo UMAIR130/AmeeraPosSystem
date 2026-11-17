@@ -24,6 +24,28 @@ class _UploadMenuPageState extends State<UploadMenuPage> {
   final TextEditingController priceController = TextEditingController();
   final TextEditingController categoryController = TextEditingController();
 
+  final TextEditingController tokenCategoryController =
+  TextEditingController();
+
+
+
+
+
+
+  bool isDeal = false;
+
+  List<Map<String, dynamic>> dealItems = [];
+
+  TextEditingController dealItemNameController = TextEditingController();
+  TextEditingController dealItemQtyController = TextEditingController();
+
+
+
+
+
+
+
+
 
 
   String printerIp = "192.168.0.142";
@@ -49,7 +71,11 @@ class _UploadMenuPageState extends State<UploadMenuPage> {
 
 
     _loadPrinterIp();
+
   }
+
+
+
 
   // 📸 Pick Image
   Future<void> pickImage() async {
@@ -144,9 +170,11 @@ class _UploadMenuPageState extends State<UploadMenuPage> {
   Future<void> uploadMenu() async {
     if (nameController.text.isEmpty ||
         priceController.text.isEmpty ||
-        categoryController.text.isEmpty) {
+        categoryController.text.isEmpty ||
+        tokenCategoryController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Fill all fields")));
+        const SnackBar(content: Text("Fill all fields")),
+      );
       return;
     }
 
@@ -157,62 +185,76 @@ class _UploadMenuPageState extends State<UploadMenuPage> {
       final category =
       categoryController.text.trim().replaceAll(" ", "_");
 
-      print("📌 Uploading to: Restaurant/$hotel/MenuItems/$category");
-
       String imageUrl = "";
 
-      // ✅ Upload image ONLY if selected
       if (pickedFile != null) {
-     //   imageUrl = await uploadImageToStorage(pickedFile!);
         imageUrl = await uploadImageToCloudinary(pickedFile!);
       }
 
-      final data = {
+      final data = isDeal
+          ? {
+        "type": "deal",
         "name": nameController.text.trim(),
         "price": priceController.text.trim(),
-        "image": imageUrl, // empty bhi ho sakta hai
+        "image": imageUrl,
+        "tokenCategory": tokenCategoryController.text.trim(), // 🔥 NEW
+        "items": dealItems,
+      }
+          : {
+        "type": "item",
+        "name": nameController.text.trim(),
+        "price": priceController.text.trim(),
+        "image": imageUrl,
+        "tokenCategory": tokenCategoryController.text.trim(), // 🔥 NEW
       };
 
-      // ✅ Web/Desktop
       if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) {
         final url = Uri.parse(
-            "https://adsadmobandfacebook-default-rtdb.firebaseio.com/Restaurant/$hotel/MenuItems/$category.json");
+          "https://adsadmobandfacebook-default-rtdb.firebaseio.com/Restaurant/$hotel/MenuItems/$category.json",
+        );
 
         final res = await http.post(url, body: json.encode(data));
-
-        print("Response: ${res.body}");
 
         if (res.statusCode != 200) {
           throw Exception("Upload failed");
         }
-      }
-      // ✅ Mobile
-      else {
+      } else {
         await dbRef.child(category).push().set(data);
       }
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("✅ Menu Uploaded")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("✅ Menu Uploaded")),
+      );
 
-      // Clear fields
+      // Clear
       nameController.clear();
       priceController.clear();
       categoryController.clear();
+      tokenCategoryController.clear(); // 🔥 CLEAR
       pickedFile = null;
+
       setState(() {});
     } catch (e) {
-      print("❌ ERROR: $e");
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text("Error: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
     }
 
     setState(() => loading = false);
+
+    dealItems.clear();
+    isDeal = false;
   }
-  // 🔓 Logout
+
   // Future<void> logout() async {
   //   await FirebaseAuth.instance.signOut();
+  //
   //   final prefs = await SharedPreferences.getInstance();
-  //   await prefs.clear();
+  //
+  //   // Sirf login/session data remove karo
+  //   await prefs.remove("email");
+  //   await prefs.remove("password");
+  //   await prefs.remove("uid");
   //
   //   if (!mounted) return;
   //
@@ -222,17 +264,16 @@ class _UploadMenuPageState extends State<UploadMenuPage> {
   //   );
   // }
 
-
-
   Future<void> logout() async {
     await FirebaseAuth.instance.signOut();
 
     final prefs = await SharedPreferences.getInstance();
 
-    // Sirf login/session data remove karo
-    await prefs.remove("email");
-    await prefs.remove("password");
+    // 🔥 ONLY SESSION RELATED KEYS REMOVE
     await prefs.remove("uid");
+    await prefs.remove("role");
+    await prefs.remove("hotelName");
+    await prefs.setBool("isLoggedIn", false);
 
     if (!mounted) return;
 
@@ -241,6 +282,10 @@ class _UploadMenuPageState extends State<UploadMenuPage> {
           (route) => false,
     );
   }
+
+
+
+
 
   // 🎨 UI
   @override
@@ -277,6 +322,18 @@ class _UploadMenuPageState extends State<UploadMenuPage> {
 
               const SizedBox(height: 15),
 
+
+              SwitchListTile(
+                title: const Text("Is this a Deal?"),
+                value: isDeal,
+                onChanged: (v) {
+                  setState(() {
+                    isDeal = v;
+                  });
+                },
+              ),
+              const SizedBox(height: 15),
+
               // 🔥 MENU NAME
               _buildInput(
                 controller: nameController,
@@ -293,7 +350,11 @@ class _UploadMenuPageState extends State<UploadMenuPage> {
                 icon: Icons.attach_money,
                 keyboard: TextInputType.number,
               ),
-
+              _buildInput(
+                controller: tokenCategoryController,
+                label: "Token Category (e.g Kitchen, BBQ, Drinks)",
+                icon: Icons.category,
+              ),
               const SizedBox(height: 20),
 
               // 🔥 IMAGE BUTTON
@@ -308,6 +369,70 @@ class _UploadMenuPageState extends State<UploadMenuPage> {
                       horizontal: 20, vertical: 12),
                 ),
               ),
+
+
+
+              if (isDeal) ...[
+                const SizedBox(height: 20),
+
+                const Text(
+                  "Deal Items",
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+
+                const SizedBox(height: 10),
+
+                _buildInput(
+                  controller: dealItemNameController,
+                  label: "Item Name (e.g Pizza)",
+                  icon: Icons.fastfood,
+                ),
+
+                const SizedBox(height: 10),
+
+                _buildInput(
+                  controller: dealItemQtyController,
+                  label: "Quantity",
+                  icon: Icons.numbers,
+                  keyboard: TextInputType.number,
+                ),
+
+                const SizedBox(height: 10),
+
+                ElevatedButton(
+                  onPressed: () {
+                    if (dealItemNameController.text.isEmpty ||
+                        dealItemQtyController.text.isEmpty) return;
+
+                    setState(() {
+                      dealItems.add({
+                        "name": dealItemNameController.text.trim(),
+                        "qty": int.parse(dealItemQtyController.text.trim()),
+                      });
+
+                      dealItemNameController.clear();
+                      dealItemQtyController.clear();
+                    });
+                  },
+                  child: const Text("Add Item"),
+                ),
+
+                const SizedBox(height: 10),
+
+                ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: dealItems.length,
+                  itemBuilder: (context, index) {
+                    final item = dealItems[index];
+                    return ListTile(
+                      title: Text(item["name"]),
+                      trailing: Text("x${item["qty"]}"),
+                    );
+                  },
+                ),
+              ],
+
+
 
               if (pickedFile != null)
                 Padding(

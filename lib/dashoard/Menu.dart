@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:esc_pos_printer/esc_pos_printer.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
 import 'package:file_picker/file_picker.dart';
@@ -24,6 +25,7 @@ import 'package:flutter/services.dart';
 
 
 import '../models/order_model.dart';
+import 'POSShortcuts.dart';
 
 class Menu extends StatefulWidget {
   final String hotelName;
@@ -72,6 +74,20 @@ class _Menu extends State<Menu> {
   String customerName = "";
   String customerPhone = "";
 
+
+  String customerAddress = "";
+
+  String riderName = "";
+  String riderPhone = "";
+
+  TextEditingController searchController = TextEditingController();
+  String searchQuery = "";
+
+
+
+
+
+
   String hotelName = "";
   String address = "";
   String phone = "";
@@ -85,11 +101,11 @@ class _Menu extends State<Menu> {
       .width > 1000;
 
   bool serviceEnabled = true;
-  bool taxEnabled = false;
+  bool taxEnabled = true;
 
-  TextEditingController serviceController = TextEditingController(text: "8");
+  TextEditingController serviceController = TextEditingController(text: "3");
 
-  TextEditingController taxController = TextEditingController(text: "5");
+  TextEditingController taxController = TextEditingController(text: "10");
 
   final ScrollController cartScrollController = ScrollController();
   final ScrollController categoryScrollController = ScrollController();
@@ -220,6 +236,7 @@ class _Menu extends State<Menu> {
     setState(() {
       selectedOrderType = "Dine In";
       serviceEnabled = true;
+      taxEnabled = true;
     });
 
     await prefs.setString('orderType', "Dine In");
@@ -236,14 +253,28 @@ class _Menu extends State<Menu> {
     calculateTotal();
   }
 
+
+
+  // old state tax and serice wapis original condtion ma
+
+
   void loadSwitchStates() async {
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
       serviceEnabled = prefs.getBool('serviceEnabled') ?? true;
-      taxEnabled = prefs.getBool('taxEnabled') ?? false;
+      taxEnabled = prefs.getBool('taxEnabled') ?? true;
     });
   }
+
+  // void loadSwitchStates() async {
+  //   final prefs = await SharedPreferences.getInstance();
+  //
+  //   setState(() {
+  //     serviceEnabled = false; // Service Charge OFF
+  //     taxEnabled = true;      // 🔒 Tax always ON
+  //   });
+  // }
 
   @override
   void dispose() {
@@ -260,8 +291,12 @@ class _Menu extends State<Menu> {
 
 
   Future<bool> showDeliveryDialog() async {
-    final nameController = TextEditingController();
-    final phoneController = TextEditingController();
+    final customerNameController = TextEditingController();
+    final customerPhoneController = TextEditingController();
+    final customerAddressController = TextEditingController();
+
+    final riderNameController = TextEditingController();
+    final riderPhoneController = TextEditingController();
 
     bool result = false;
 
@@ -270,34 +305,81 @@ class _Menu extends State<Menu> {
       builder: (context) {
         return AlertDialog(
           title: const Text("Delivery Details"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: "Customer Name",
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+
+                // 👤 CUSTOMER INFO
+                const Text("Customer Info", style: TextStyle(fontWeight: FontWeight.bold)),
+
+                TextField(
+                  controller: customerNameController,
+                  decoration: const InputDecoration(
+                    labelText: "Customer Name",
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: phoneController,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: "Phone Number",
+
+                const SizedBox(height: 10),
+
+                TextField(
+                  controller: customerPhoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: "Customer Phone Number",
+                  ),
                 ),
-              ),
-            ],
+
+                const SizedBox(height: 10),
+
+                TextField(
+                  controller: customerAddressController,
+                  decoration: const InputDecoration(
+                    labelText: "Customer Address",
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                // 🚴 RIDER INFO
+                const Text("Rider Info", style: TextStyle(fontWeight: FontWeight.bold)),
+
+                TextField(
+                  controller: riderNameController,
+                  decoration: const InputDecoration(
+                    labelText: "Rider Name",
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+
+                TextField(
+                  controller: riderPhoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: "Rider Phone Number",
+                  ),
+                ),
+              ],
+            ),
           ),
+
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text("Cancel"),
             ),
+
             ElevatedButton(
               onPressed: () {
-                customerName = nameController.text.trim();
-                customerPhone = phoneController.text.trim();
+                // 👤 Customer
+                customerName = customerNameController.text.trim();
+                customerPhone = customerPhoneController.text.trim();
+                customerAddress = customerAddressController.text.trim();
+
+                // 🚴 Rider
+                riderName = riderNameController.text.trim();
+                riderPhone = riderPhoneController.text.trim();
 
                 result = true;
                 Navigator.pop(context);
@@ -311,7 +393,6 @@ class _Menu extends State<Menu> {
 
     return result;
   }
-
 
 
 
@@ -397,21 +478,32 @@ class _Menu extends State<Menu> {
   }
 
   // ================= CART =================
+
   void addToCart(Map item) {
     final index = cart.indexWhere((e) => e["name"] == item["name"]);
+
+    double price = double.tryParse(item["price"].toString()) ?? 0;
 
     if (index == -1) {
       cart.add({
         "name": item["name"],
-        "price": double.parse(item["price"].toString()),
+        "price": price,
         "qty": 1,
+
+
+        "tokenCategory": item["tokenCategory"] ?? "Kitchen",
+        "items": item["items"] ?? [],
       });
     } else {
-      cart[index]["qty"]++;
+      cart[index]["qty"] = (cart[index]["qty"] ?? 1) + 1;
     }
 
     selectedCartItem = item["name"];
     calculateTotal();
+
+    // 🔥 IMPORTANT: force clean rebuild
+    cart = List.from(cart);
+
     setState(() {});
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -427,28 +519,59 @@ class _Menu extends State<Menu> {
       subTotal += (item["price"] * item["qty"]);
     }
 
-    // 🔹 Discount %
-    double discountPercent = double.tryParse(discountController.text) ?? 0;
-
-    double discountAmount = subTotal * (discountPercent / 100);
-
     // 🔹 Service %
     double servicePercent = double.tryParse(serviceController.text) ?? 0;
-
     double serviceAmount = serviceEnabled
         ? subTotal * (servicePercent / 100)
         : 0;
 
     // 🔹 Tax %
     double taxPercent = double.tryParse(taxController.text) ?? 0;
+    double taxAmount = taxEnabled
+        ? subTotal * (taxPercent / 100)
+        : 0;
 
-    double taxAmount = taxEnabled ? subTotal * (taxPercent / 100) : 0;
+    // 🔹 Total Before Discount
+    double totalAmount = subTotal + serviceAmount + taxAmount;
+
+    // 🔹 Discount %
+    double discountPercent = double.tryParse(discountController.text) ?? 0;
+    double discountAmount = totalAmount * (discountPercent / 100);
 
     // 🔹 Grand Total
-    grandTotal = subTotal - discountAmount + serviceAmount + taxAmount;
+    grandTotal = totalAmount - discountAmount;
 
     setState(() {});
-  }
+  }  // void calculateTotal() {
+  //   subTotal = 0;
+  //
+  //   // 🔹 Subtotal calculate
+  //   for (var item in cart) {
+  //     subTotal += (item["price"] * item["qty"]);
+  //   }
+  //
+  //   // 🔹 Discount %
+  //   double discountPercent = double.tryParse(discountController.text) ?? 0;
+  //
+  //   double discountAmount = subTotal * (discountPercent / 100);
+  //
+  //   // 🔹 Service %
+  //   double servicePercent = double.tryParse(serviceController.text) ?? 0;
+  //
+  //   double serviceAmount = serviceEnabled
+  //       ? subTotal * (servicePercent / 100)
+  //       : 0;
+  //
+  //   // 🔹 Tax %
+  //   double taxPercent = double.tryParse(taxController.text) ?? 0;
+  //
+  //   double taxAmount = taxEnabled ? subTotal * (taxPercent / 100) : 0;
+  //
+  //   // 🔹 Grand Total
+  //   grandTotal = subTotal - discountAmount + serviceAmount + taxAmount;
+  //
+  //   setState(() {});
+  // }
 
   void scrollToCartItem(String itemName) {
     final index = cart.indexWhere((e) => e["name"] == itemName);
@@ -462,10 +585,172 @@ class _Menu extends State<Menu> {
   }
 
 
+
+// ====================== 🔹 Helper functions ======================
+
+// Load saved menu order for selected category
+  Future<void> loadMenuOrder() async {
+    if (!menuItems.containsKey(selectedCategory)) return;
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    List<String>? savedOrder = prefs.getStringList(
+        "${selectedCategory}_menu_order");
+    if (savedOrder != null && savedOrder.isNotEmpty) {
+      final currentItems = menuItems[selectedCategory]!;
+      currentItems.sort((a, b) {
+        int indexA = savedOrder.indexOf(
+            a["id"]?.toString() ?? a["name"].toString());
+        int indexB = savedOrder.indexOf(
+            b["id"]?.toString() ?? b["name"].toString());
+        return indexA.compareTo(indexB);
+      });
+      setState(() {
+        menuItems[selectedCategory] = currentItems;
+      });
+    }
+  }
+
+// Save current menu order
+  Future<void> saveMenuOrder() async {
+    if (!menuItems.containsKey(selectedCategory)) return;
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    List<String> idOrder = menuItems[selectedCategory]!
+        .map((e) => e["id"]?.toString() ?? e["name"].toString())
+        .toList();
+    await prefs.setStringList("${selectedCategory}_menu_order", idOrder);
+  }
+
+
+
+
+
+  // ================= RESPONSIVE =================
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isMobile = constraints.maxWidth < 700;
+          return isMobile ? buildMobile() : buildDesktop();
+        },
+      ),
+    );
+  }
+
+
+
+
+  Widget buildDesktop() {
+    return Container(
+      color: const Color(0xFFF4F6F9),
+      child: Row(
+        children: [
+
+          // LEFT SIDE (Menu + Search + Categories)
+          Expanded(
+            flex: 4,
+            child: Column(
+              children: [
+
+                // SEARCH BAR
+                Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(8),
+                  child: TextField(
+                    controller: searchController,
+                    onChanged: (value) {
+                      setState(() {
+                        searchQuery = value.toLowerCase();
+                      });
+                    },
+                    decoration: InputDecoration(
+
+
+                      hintText: "Search item...",
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+
+                      ),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+
+                // CATEGORY BAR
+                Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: buildCategories(),
+                ),
+
+                const Divider(height: 1),
+
+                // MENU GRID (fills remaining space)
+                Expanded(
+                  child: buildMenuGrid(),
+                ),
+              ],
+            ),
+          ),
+
+          Container(width: 1, color: Colors.grey.shade300),
+
+          // RIGHT SIDE (FULL HEIGHT CART)
+          Expanded(
+            flex: 2,
+            child: Container(
+              height: double.infinity, // 🔥 important
+              color: Colors.white,
+              child: buildCart(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
   Widget buildMenuGrid() {
     if (!menuItems.containsKey(selectedCategory)) return Container();
-    final items = List<Map<String, dynamic>>.from(menuItems[selectedCategory]!);
+  // final items = List<Map<String, dynamic>>.from(menuItems[selectedCategory]!);
 
+    List<Map<String, dynamic>> allItems = [];
+
+    menuItems.forEach((key, value) {
+      allItems.addAll(List<Map<String, dynamic>>.from(value));
+    });
+
+    // 🔥 SEARCH FILTER (GLOBAL)
+    final items = searchQuery.isEmpty
+        ? List<Map<String, dynamic>>.from(menuItems[selectedCategory] ?? [])
+        : allItems.where((item) {
+      final name = (item["name"] ?? "").toLowerCase();
+      // return name.contains(searchQuery);
+      return name.contains(searchQuery.toLowerCase());
+    }).toList();
+
+
+    // final List<Map<String, dynamic>> items;
+    //
+    // if (searchQuery.isNotEmpty) {
+    //   // 🔥 GLOBAL SEARCH
+    //   List<Map<String, dynamic>> allItems = [];
+    //
+    //   menuItems.forEach((key, value) {
+    //     allItems.addAll(List<Map<String, dynamic>>.from(value));
+    //   });
+    //
+    //   items = allItems.where((item) {
+    //     final name = (item["name"] ?? "").toLowerCase();
+    //     return name.contains(searchQuery.toLowerCase());
+    //   }).toList();
+    //
+    // } else {
+    //   // 🔥 CATEGORY WISE
+    //   items = List<Map<String, dynamic>>.from(
+    //     menuItems[selectedCategory] ?? [],
+    //   );
+    // }
     // 🔹 Load saved order on first build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       loadMenuOrder();
@@ -523,18 +808,41 @@ class _Menu extends State<Menu> {
                             fadeInDuration: Duration.zero,
                           ),
                         ),
+                        // Expanded(
+                        //   flex: 3,
+                        //   child: Padding(
+                        //     padding: const EdgeInsets.all(6),
+                        //     child: Text(
+                        //       item["name"],
+                        //       maxLines: 2,
+                        //       overflow: TextOverflow.ellipsis,
+                        //       textAlign: TextAlign.center,
+                        //     ),
+                        //   ),
+                        // ),
+
                         Expanded(
                           flex: 3,
                           child: Padding(
                             padding: const EdgeInsets.all(6),
-                            child: Text(
-                              item["name"],
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
+                            child: RichText(
+
                               textAlign: TextAlign.center,
+                              maxLines: 2,
+
+                              overflow: TextOverflow.ellipsis,
+                              text: highlightText(
+
+
+
+                                item["name"] ?? "",
+                                searchQuery,
+                              ),
                             ),
                           ),
                         ),
+                        
+                        
                         Padding(
                           padding: const EdgeInsets.all(6),
                           child: Text(
@@ -563,136 +871,59 @@ class _Menu extends State<Menu> {
     );
   }
 
-// ====================== 🔹 Helper functions ======================
-
-// Load saved menu order for selected category
-  Future<void> loadMenuOrder() async {
-    if (!menuItems.containsKey(selectedCategory)) return;
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    List<String>? savedOrder = prefs.getStringList(
-        "${selectedCategory}_menu_order");
-    if (savedOrder != null && savedOrder.isNotEmpty) {
-      final currentItems = menuItems[selectedCategory]!;
-      currentItems.sort((a, b) {
-        int indexA = savedOrder.indexOf(
-            a["id"]?.toString() ?? a["name"].toString());
-        int indexB = savedOrder.indexOf(
-            b["id"]?.toString() ?? b["name"].toString());
-        return indexA.compareTo(indexB);
-      });
-      setState(() {
-        menuItems[selectedCategory] = currentItems;
-      });
-    }
-  }
-
-// Save current menu order
-  Future<void> saveMenuOrder() async {
-    if (!menuItems.containsKey(selectedCategory)) return;
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    List<String> idOrder = menuItems[selectedCategory]!
-        .map((e) => e["id"]?.toString() ?? e["name"].toString())
-        .toList();
-    await prefs.setStringList("${selectedCategory}_menu_order", idOrder);
-  }
 
 
 
 
 
-  // ================= RESPONSIVE =================
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isMobile = constraints.maxWidth < 700;
-        return isMobile ? buildMobile() : buildDesktop();
-      },
-    );
-  }
-
-  Widget buildDesktop() {
-    return Container(
-      color: const Color(0xfff4f6f9), // POS background
-      child: Column(
-        children: [
-          // Modern category bar
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: buildCategories(),
-          ),
-
-          const Divider(height: 1),
-
-          Expanded(
-            child: Row(
-              children: [
-                Expanded(
-                  flex: 4,
-                  child: Container(
-                    color: const Color(0xfff4f6f9),
-                    child: buildMenuGrid(),
-                  ),
-                ),
-
-                Container(width: 1, color: Colors.grey.shade300),
-
-                Expanded(flex: 2, child: buildCart()),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
 
-// 🔹 Helper function: save current order with await
+
+
+
+
 
 
   Widget buildCategories() {
-    return SizedBox(
-      height: 60, // parent fixed height
-      child: Listener(
-        onPointerSignal: (pointerSignal) {
-          if (pointerSignal is PointerScrollEvent) {
-            if (categoryScrollController.hasClients) {
-              final newOffset =
-                  categoryScrollController.offset +
-                      pointerSignal.scrollDelta.dy;
-              final maxScroll =
-                  categoryScrollController.position.maxScrollExtent;
-              final minScroll =
-                  categoryScrollController.position.minScrollExtent;
-              categoryScrollController.jumpTo(
-                newOffset.clamp(minScroll, maxScroll),
-              );
-            }
-          }
-        },
-        child: SingleChildScrollView(
-          controller: categoryScrollController,
-          scrollDirection: Axis.horizontal,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+
+        const columns = 9;
+        const spacing = 1.0;
+        const padding = 1.0;
+
+        final totalSpacing = (columns - 1) * spacing;
+        final availableWidth = constraints.maxWidth - (padding * 2);
+
+        final itemWidth = (availableWidth - totalSpacing) / columns;
+
+        return Container(
+          padding: const EdgeInsets.all(padding),
           child: ReorderableWrap(
-            alignment: WrapAlignment.start,
-            spacing: 8,
-            runSpacing: 0,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            spacing: spacing,
+            runSpacing: spacing,
             needsLongPressDraggable: false,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            // vertical center
+            buildDraggableFeedback: (context, constraints, child) =>
+                Material(child: child),
+
             children: categories.map((cat) {
               final selected = cat == selectedCategory;
+
               return GestureDetector(
                 key: ValueKey(cat),
-                onTap: () => setState(() => selectedCategory = cat),
+                onTap: () {
+                  setState(() {
+                    selectedCategory = cat;
+                    searchQuery = "";
+                    searchController.clear();
+                  });
+                },
                 onLongPress: () => _showCategoryOptions(cat),
 
                 child: Container(
-                  width: 130,
+                  width: 125,
+                  //width:itemWidth
                   height: 50,
-                  // 🔥 fix each category height
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: selected ? Colors.black : Colors.deepOrangeAccent,
@@ -700,21 +931,23 @@ class _Menu extends State<Menu> {
                   ),
                   child: Text(
                     cat,
+                    overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
+                      fontSize: 16,
                     ),
                   ),
                 ),
               );
             }).toList(),
+
             onReorder: (oldIndex, newIndex) {
               final item = categories.removeAt(oldIndex);
               categories.insert(newIndex, item);
               setState(() {});
 
-              // Save order
               SharedPreferences.getInstance().then((prefs) {
                 prefs.setStringList(
                   "${widget.hotelName}_category_order",
@@ -723,79 +956,8 @@ class _Menu extends State<Menu> {
               });
             },
           ),
-        ),
-      ),
-    );
-  }
-
-
-  // ================= MOBILE =================
-  Widget buildMobile() {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.hotelName),
-        backgroundColor: Colors.green,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.shopping_cart),
-            onPressed: () {
-              // 👉 optional: scroll to cart / open bottom sheet
-            },
-          ),
-        ],
-      ),
-
-      body: Column(
-        children: [
-          // 🔹 Categories (NOW VISIBLE)
-          Container(
-            height: 55,
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: categories.length,
-              itemBuilder: (context, i) {
-                final cat = categories[i];
-                final selected = cat == selectedCategory;
-
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: GestureDetector(
-                    onTap: () => setState(() => selectedCategory = cat),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: selected ? Colors.green : Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        cat,
-                        style: TextStyle(
-                          color: selected ? Colors.white : Colors.black,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-
-          const Divider(height: 1),
-
-          // 🔹 Menu
-          Expanded(child: buildMobileMenu()),
-
-          // 🔹 Cart
-          SizedBox(
-            height: 230,
-            child: buildCart(),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
   // ================= MENU =================
@@ -895,6 +1057,78 @@ class _Menu extends State<Menu> {
     );
   }
 
+
+
+  // ================= MOBILE =================
+
+  Widget buildMobile() {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.hotelName),
+        backgroundColor: Colors.green,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.shopping_cart),
+            onPressed: () {
+              // 👉 optional: scroll to cart / open bottom sheet
+            },
+          ),
+        ],
+      ),
+
+      body: Column(
+        children: [
+          // 🔹 Categories (NOW VISIBLE)
+          Container(
+            height: 55,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: categories.length,
+              itemBuilder: (context, i) {
+                final cat = categories[i];
+                final selected = cat == selectedCategory;
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: GestureDetector(
+                    onTap: () => setState(() => selectedCategory = cat),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: selected ? Colors.green : Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        cat,
+                        style: TextStyle(
+                          color: selected ? Colors.white : Colors.black,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          const Divider(height: 1),
+
+          // 🔹 Menu
+          Expanded(child: buildMobileMenu()),
+
+          // 🔹 Cart
+          SizedBox(
+            height: 230,
+            child: buildCart(),
+          ),
+        ],
+      ),
+    );
+  }
   // ================= CART =================
 
   Widget buildCart() {
@@ -906,7 +1140,7 @@ class _Menu extends State<Menu> {
     double itemHeight = 70; // Approx height per item (Card + padding)
 
     return Container(
-      color: Colors.grey.shade200,
+      color: const Color(0xFFF4F6F9),
       child: Column(
         children: [
           const SizedBox(height: 4),
@@ -923,6 +1157,7 @@ class _Menu extends State<Menu> {
                     setState(() {
                       selectedOrderType = "Dine In";
                       serviceEnabled = true; // ✅ ALWAYS ON
+                      taxEnabled = true;
                     });
 
                     await prefs.setBool('serviceEnabled', true);
@@ -939,6 +1174,7 @@ class _Menu extends State<Menu> {
                     setState(() {
                       selectedOrderType = "Takeaway";
                       serviceEnabled = false; // ❌ AUTO OFF
+                      taxEnabled = false;
                     });
 
                     await prefs.setBool('serviceEnabled', false);
@@ -955,6 +1191,7 @@ class _Menu extends State<Menu> {
                     setState(() {
                       selectedOrderType = "Delivery";
                       serviceEnabled = false; // ❌ mostly OFF
+                      taxEnabled = false;
                     });
 
                     await prefs.setBool('serviceEnabled', false);
@@ -1031,8 +1268,17 @@ class _Menu extends State<Menu> {
                         final item = cart[i];
                         final selected = selectedCartItem == item["name"];
 
+                        // 🔥 DEAL CHECK
+                        bool isDeal =
+                            item["items"] != null &&
+                                item["items"] is List &&
+                                (item["items"] as List).isNotEmpty;
+
+
+
+
                         return Card(
-                          key: ValueKey(item["name"]), // 🔥 IMPORTANT FIX
+                          key: ValueKey(item["name"]),
                           elevation: selected ? 5 : 2,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
@@ -1046,147 +1292,183 @@ class _Menu extends State<Menu> {
                               horizontal: 10,
                               vertical: 6,
                             ),
-                            child: Row(
+
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
 
-                                const SizedBox(width: 8),
+                                // ================= MAIN ROW =================
+                                Row(
+                                  children: [
 
-                                Expanded(
-                                  flex: 4,
-                                  child: Text(
-                                    item["name"],
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
+                                    const SizedBox(width: 8),
 
-                                const SizedBox(width: 8),
-
-                                // ================= QTY =================
-                                Container(
-                                  decoration: BoxDecoration(
-                                    border: Border.all(color: Colors.grey.shade300),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Row(
-                                    children: [
-
-                                      // ➖ MINUS
-                                      InkWell(
-                                        onTap: () {
-                                          setState(() {
-                                            int index = cart.indexWhere(
-                                                    (e) => e["name"] == item["name"]);
-
-                                            if (index != -1) {
-                                              final updatedItem =
-                                              Map<String, dynamic>.from(cart[index]);
-
-                                              int qty = updatedItem["qty"] ?? 1;
-
-                                              if (qty > 1) {
-                                                updatedItem["qty"] = qty - 1;
-                                                cart[index] = updatedItem;
-                                              } else {
-                                                cart.removeAt(index);
-                                              }
-
-                                              calculateTotal();
-                                            }
-                                          });
-                                        },
-                                        child: const Padding(
-                                          padding: EdgeInsets.symmetric(
-                                            horizontal: 6,
-                                            vertical: 4,
-                                          ),
-                                          child: Icon(Icons.remove, size: 16),
+                                    Expanded(
+                                      flex: 4,
+                                      child: Text(
+                                        item["name"],
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 13,
                                         ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
+                                    ),
 
-                                      // QTY TEXT
-                                      SizedBox(
-                                        width: 26,
-                                        child: Center(
-                                          child: Text(
-                                            "${item["qty"]}",
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 13,
+                                    const SizedBox(width: 8),
+
+                                    // ================= QTY =================
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          border: Border.all(color: Colors.grey.shade300),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Row(
+                                          children: [
+
+                                            InkWell(
+                                              onTap: () {
+                                                setState(() {
+                                                  int index = cart.indexWhere(
+                                                          (e) => e["name"] == item["name"]);
+
+                                                  if (index != -1) {
+                                                    final updatedItem =
+                                                    Map<String, dynamic>.from(cart[index]);
+
+                                                    int qty = updatedItem["qty"] ?? 1;
+
+                                                    if (qty > 1) {
+                                                      updatedItem["qty"] = qty - 1;
+                                                      cart[index] = updatedItem;
+                                                    } else {
+                                                      cart.removeAt(index);
+                                                    }
+
+                                                    calculateTotal();
+                                                  }
+                                                });
+                                              },
+                                              child: const Padding(
+                                                padding: EdgeInsets.all(4),
+                                                child: Icon(Icons.remove, size: 16),
+                                              ),
                                             ),
-                                          ),
+
+                                            SizedBox(
+                                              width: 26,
+                                              child: Center(
+                                                child: Text(
+                                                  "${item["qty"]}",
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+
+                                            InkWell(
+                                              onTap: () {
+                                                setState(() {
+                                                  int index = cart.indexWhere(
+                                                          (e) => e["name"] == item["name"]);
+
+                                                  if (index != -1) {
+                                                    final updatedItem =
+                                                    Map<String, dynamic>.from(cart[index]);
+
+                                                    updatedItem["qty"] =
+                                                        (updatedItem["qty"] ?? 1) + 1;
+
+                                                    cart[index] = updatedItem;
+                                                    calculateTotal();
+                                                  }
+                                                });
+                                              },
+                                              child: const Padding(
+                                                padding: EdgeInsets.all(4),
+                                                child: Icon(Icons.add, size: 16),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
 
-                                      // ➕ PLUS
-                                      InkWell(
-                                        onTap: () {
-                                          setState(() {
-                                            int index = cart.indexWhere(
-                                                    (e) => e["name"] == item["name"]);
+                                    const SizedBox(width: 10),
 
-                                            if (index != -1) {
-                                              final updatedItem =
-                                              Map<String, dynamic>.from(cart[index]);
-
-                                              updatedItem["qty"] =
-                                                  (updatedItem["qty"] ?? 1) + 1;
-
-                                              cart[index] = updatedItem;
-                                              calculateTotal();
-                                            }
-                                          });
-                                        },
-                                        child: const Padding(
-                                          padding: EdgeInsets.symmetric(
-                                            horizontal: 6,
-                                            vertical: 4,
-                                          ),
-                                          child: Icon(Icons.add, size: 16),
+                                    SizedBox(
+                                      width: 65,
+                                      child: Text(
+                                        "Rs ${(item["price"] * item["qty"]).toInt()}",
+                                        textAlign: TextAlign.right,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
                                         ),
                                       ),
-                                    ],
-                                  ),
+                                    ),
+
+                                    const SizedBox(width: 8),
+
+                                    InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          cart.removeAt(i);
+                                          calculateTotal();
+                                        });
+                                      },
+                                      child: const Icon(
+                                        Icons.delete,
+                                        color: Colors.red,
+                                        size: 18,
+                                      ),
+                                    ),
+                                  ],
                                 ),
 
-                                const SizedBox(width: 10),
+                                // ================= DEAL ITEMS SHOW =================
+                                if (isDeal) ...[
+                                  const SizedBox(height: 6),
 
-                                SizedBox(
-                                  width: 65,
-                                  child: Text(
-                                    "Rs ${(item["price"] * item["qty"]).toInt()}",
-                                    textAlign: TextAlign.right,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13,
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 8),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          "🔥 Deal Items:",
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.green,
+                                          ),
+                                        ),
+
+                                        const SizedBox(height: 4),
+
+                                        ...List.generate(
+                                          (item["items"] as List).length,
+                                              (index) {
+                                            final d = item["items"][index];
+
+                                            return Text(
+                                              "• ${d["name"]} x${d["qty"]}",
+                                              style: const TextStyle(fontSize: 11),
+                                            );
+                                          },
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ),
-
-                                const SizedBox(width: 8),
-
-                                InkWell(
-                                  onTap: () {
-                                    setState(() {
-                                      cart.removeAt(i);
-                                      calculateTotal();
-                                    });
-                                  },
-                                  child: const Icon(
-                                    Icons.delete,
-                                    color: Colors.red,
-                                    size: 18,
-                                  ),
-                                ),
+                                ],
                               ],
                             ),
                           ),
                         );
                       },
+
+
                     ),
                   );
                 },
@@ -1215,6 +1497,7 @@ class _Menu extends State<Menu> {
 
                     Switch(
                       value: serviceEnabled,
+                      //onChanged: null,
                       onChanged: (v) async {
                         final prefs = await SharedPreferences.getInstance();
 
@@ -1236,6 +1519,7 @@ class _Menu extends State<Menu> {
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
                           isDense: true,
+                 //         enabled: false,
                           border: OutlineInputBorder(),
                           contentPadding:
                           EdgeInsets.symmetric(horizontal: 6, vertical: 6),
@@ -1256,6 +1540,7 @@ class _Menu extends State<Menu> {
 
                     Switch(
                       value: taxEnabled,
+                   ///   onChanged: null,
                       onChanged: (v) async {
                         final prefs = await SharedPreferences.getInstance();
 
@@ -1267,6 +1552,9 @@ class _Menu extends State<Menu> {
 
                         calculateTotal();
                       },
+
+
+
                     ),
 
                     SizedBox(
@@ -1277,6 +1565,7 @@ class _Menu extends State<Menu> {
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
                           isDense: true,
+                     //     enabled: false,
                           border: OutlineInputBorder(),
                           contentPadding:
                           EdgeInsets.symmetric(horizontal: 6, vertical: 6),
@@ -1286,6 +1575,33 @@ class _Menu extends State<Menu> {
                     ),
                   ],
                 ),
+
+         //  fix 10 %
+                // ================= TAX =================
+                // Row(
+                //   children: [
+                //     const Expanded(
+                //       child: Text("Tax %"),
+                //     ),
+                //
+                //     SizedBox(
+                //       width: 60,
+                //       height: 32,
+                //       child: TextField(
+                //         controller: taxController,
+                //         enabled: false, // 🔒 User change nahi kar sakta
+                //         decoration: const InputDecoration(
+                //           isDense: true,
+                //           border: OutlineInputBorder(),
+                //           contentPadding: EdgeInsets.symmetric(
+                //             horizontal: 6,
+                //             vertical: 6,
+                //           ),
+                //         ),
+                //       ),
+                //     ),
+                //   ],
+                // ),
 
 
                 // ================= DISCOUNT =================
@@ -1357,6 +1673,7 @@ class _Menu extends State<Menu> {
                               final discountAmount = (subTotal * discountInput) / 100;
 
                               final order = Order(
+                                hotelName: widget.hotelName,
                                 orderId: orderIdStr, // ✅ Order number explicitly set
                                 items: cart.map((e) => OrderItem(
                                   name: e['name'],
@@ -1377,37 +1694,12 @@ class _Menu extends State<Menu> {
                               );
 
                               // 🔹 Save order
-                              await box.add(order);
 
-                              // 🔹 Fetch hotel info
-                              // String hotelName = widget.hotelName;
-                              // String address = "";
-                              // String phone = "";
-
-                            //  final ref = FirebaseDatabase.instance.ref("Restaurant/${widget.hotelName}/Users");
-                            //  final snapshot = await ref.get();
-
-                              // if (snapshot.exists) {
-                              //   final usersMap = Map<String, dynamic>.from(snapshot.value as Map);
-                              //
-                              //   // 🔥 SAFE LOOP (better than .first)
-                              //   usersMap.forEach((key, value) {
-                              //     final data = Map<String, dynamic>.from(value);
-                              //
-                              //     // pick correct user (you can refine condition if needed)
-                              //     if (address.isEmpty) {
-                              //       address = data["address"]?.toString() ?? "";
-                              //       phone = data["phone"]?.toString() ?? "";
-                              //       hotelName = data["HotelName"]?.toString() ??
-                              //           hotelName;
-                              //     }
-                              //   });
-                              //   }
 
                               // 🔹 Print with correct order number
                               await loadSavedHotelInfo();
 
-                              await printLanRaw(
+                         bool printed =     await printLanRaw(
                                 orderIdStr, // ✅ Pass the exact same order number
                                 cart,
                                 this.hotelName.isEmpty ? widget.hotelName : this.hotelName,
@@ -1425,17 +1717,41 @@ class _Menu extends State<Menu> {
                                 phone,
                               );
 
-                              setState(() {
-                                cart.clear();
-                                subTotal = 0;
-                                grandTotal = 0;
-                                discountController.clear();
-                              });
+                              // setState(() {
+                              //   cart.clear();
+                              //   subTotal = 0;
+                              //   grandTotal = 0;
+                              //   discountController.clear();
+                              // });
+
+
+                              if (printed) {
+                                await box.add(order);
+
+                                setState(() {
+                                  cart.clear();
+                                  subTotal = 0;
+                                  grandTotal = 0;
+                                  discountController.clear();
+                                });
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    backgroundColor: Colors.red,
+                                    content: Text(
+                                      "❌ Printer Not Conneced",
+                                    ),
+                                  ),
+                                );
+                              }
 
 
                             },
-                          ),                        ),
+                          ),
+                        ),
                       ),
+
+
                       const SizedBox(width: 12),
 
                       // 🔹 Manage Order Button
@@ -1444,16 +1760,16 @@ class _Menu extends State<Menu> {
                           height: 45,
                           child: ElevatedButton.icon(
                             icon: const Icon(Icons.list_alt),
-                            label: const Text("Manage Order"),
+                            label: const Text("Save Order"),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.orange.shade700,
                               foregroundColor: Colors.white,
                             ),
                             onPressed: () async {
 
+                              // 🔥 DELIVERY DIALOG
                               if (selectedOrderType == "Delivery") {
                                 bool ok = await showDeliveryDialog();
-
                                 if (!ok) return;
                               }
 
@@ -1462,119 +1778,115 @@ class _Menu extends State<Menu> {
                               int? tableNumber;
                               int? floorNumber;
 
-                              // Dine In case
+                              // 🔥 DINE IN DIALOG
                               if (selectedOrderType == "Dine In") {
                                 bool okPressed = false;
 
                                 await showDialog(
                                   context: context,
-                                  builder: (_) =>
-                                      AlertDialog(
-                                        title: const Text(
-                                            "Enter Table & Floor Number"),
-                                        content: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            TextField(
-                                              keyboardType: TextInputType
-                                                  .number,
-                                              decoration: const InputDecoration(
-                                                  labelText: "Table Number"),
-                                              onChanged: (v) =>
-                                              tableNumber = int.tryParse(v),
-                                            ),
-                                            TextField(
-                                              keyboardType: TextInputType
-                                                  .number,
-                                              decoration: const InputDecoration(
-                                                  labelText: "Floor Number"),
-                                              onChanged: (v) =>
-                                              floorNumber = int.tryParse(v),
-                                            ),
-                                          ],
+                                  builder: (_) => AlertDialog(
+                                    title: const Text("Enter Table & Floor Number"),
+                                    content: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        TextField(
+                                          keyboardType: TextInputType.number,
+                                          decoration: const InputDecoration(labelText: "Table Number"),
+                                          onChanged: (v) => tableNumber = int.tryParse(v),
                                         ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () {
-                                              okPressed = true;
-                                              Navigator.pop(context);
-                                            },
-                                            child: const Text("OK"),
-                                          ),
-                                        ],
+                                        TextField(
+                                          keyboardType: TextInputType.number,
+                                          decoration: const InputDecoration(labelText: "Floor Number"),
+                                          onChanged: (v) => floorNumber = int.tryParse(v),
+                                        ),
+                                      ],
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () {
+                                          okPressed = true;
+                                          Navigator.pop(context);
+                                        },
+                                        child: const Text("OK"),
                                       ),
+                                    ],
+                                  ),
                                 );
 
                                 if (!okPressed) return;
                               }
 
-                              // 🔹 Hive box
                               final box = Hive.box<Order>('orders');
 
-                              // 🔹 Calculate next order number starting from 1001
                               int maxOrderId = 1000;
                               for (var order in box.values) {
                                 int id = int.tryParse(order.orderId) ?? 0;
                                 if (id > maxOrderId) maxOrderId = id;
                               }
+
                               int nextOrderNumber = maxOrderId + 1;
 
-                              // 🔹 Build order object
+                              // 🔥 FINAL ORDER OBJECT (UPDATED)
                               final order = Order(
+                                hotelName: widget.hotelName,
                                 orderId: nextOrderNumber.toString(),
-                                // ✅ 1001, 1002...
                                 orderType: selectedOrderType,
                                 tableNumber: tableNumber,
                                 floorNumber: floorNumber,
 
+                                // 👇 DELIVERY DATA SAVE IN HIVE
+                                customerName: selectedOrderType == "Delivery" ? customerName : null,
+                                customerPhone: selectedOrderType == "Delivery" ? customerPhone : null,
+                                customerAddress: selectedOrderType == "Delivery" ? customerAddress : null,
 
-                                  customerName:
-                                  selectedOrderType == "Delivery"
-                                      ? customerName
+                                riderName: selectedOrderType == "Delivery" ? riderName : null,
+                                riderPhone: selectedOrderType == "Delivery" ? riderPhone : null,
+
+                                // items: cart.map((e) => OrderItem(
+                                //   name: e["name"],
+                                //   qty: e["qty"],
+                                //   price: e["price"] * 1.0,
+                                // )).toList(),
+
+
+
+
+                                items: cart.map((e) => OrderItem(
+                                  name: e["name"],
+                                  qty: e["qty"],
+                                  price: e["price"] * 1.0,
+
+                                  tokenCategory: e["tokenCategory"],
+
+
+                                  items: e["items"] != null
+                                      ? List<Map<String,dynamic>>.from(e["items"])
                                       : null,
-
-                                  customerPhone:
-                                  selectedOrderType == "Delivery"
-                                      ? customerPhone
-                                      : null,
+                                )).toList(),
 
 
 
-                                items: cart.map((e) =>
-                                    OrderItem(
-                                      name: e["name"],
-                                      qty: e["qty"],
-                                      price: e["price"] * 1.0,
-                                    )).toList(),
                                 subTotal: subTotal,
-                                service: selectedOrderType == "Dine In"
-                                    ? subTotal * 0.08
-                                    : 0.0,
-                                discount: double.tryParse(
-                                    discountController.text) ?? 0,
+                                service: selectedOrderType == "Dine In" ? subTotal * 0.08 : 0.0,
+                                discount: double.tryParse(discountController.text) ?? 0,
                                 grandTotal: grandTotal,
                                 timestamp: DateTime.now(),
                               );
 
-                              // 🔹 Save to Hive
                               await box.put(order.orderId, order);
 
-                              // 🔹 Clear cart
                               setState(() {
                                 cart.clear();
                                 calculateTotal();
                               });
 
-                              // 🔹 Show confirmation
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text("✅ Order stored with ID: ${order
-                                      .orderId}"),
+                                  content: Text("✅ Order stored with ID: ${order.orderId}"),
                                   duration: const Duration(seconds: 2),
                                 ),
                               );
-                            },
-                          ),
+                            },                          ),
                         ),
                       ),
                     ],
@@ -1595,7 +1907,7 @@ class _Menu extends State<Menu> {
 
 
 
-  Future<void> printLanRaw(
+  Future<bool> printLanRaw(
       String orderId,
       List<Map<String, dynamic>> cart,
       String hotelName,
@@ -1699,7 +2011,11 @@ class _Menu extends State<Menu> {
     bytes += generator.hr();
 
 // ================= ITEMS =================
-    for (var item in cart) {
+
+
+     for (var item in cart) {
+
+       // 🔥 MAIN ITEM ROW
       bytes += generator.row([
         PosColumn(
           text: item["name"].toString(),
@@ -1717,11 +2033,55 @@ class _Menu extends State<Menu> {
           styles: PosStyles(align: PosAlign.right),
         ),
       ]);
+
+      // 🔥 DEAL ITEMS (SUB ITEMS PRINT)
+      if (item["items"] != null && item["items"] is List) {
+
+        for (var d in item["items"]) {
+          bytes += generator.row([
+            PosColumn(
+              text: " - ${d["name"]}",
+              width: 7,
+              styles: PosStyles(align: PosAlign.left),
+            ),
+            PosColumn(
+              text: "${d["qty"]}",
+              width: 2,
+              styles: PosStyles(align: PosAlign.center),
+            ),
+            PosColumn(
+              text: "",
+              width: 3,
+              styles: PosStyles(align: PosAlign.right),
+            ),
+          ]);
+        }
+      }
     }
+
+
+
+
+
+
+
 
     bytes += generator.hr();
 
     // ================= TOTAL =================
+    // double serviceAmount = serviceEnabled
+    //     ? subTotal * (double.tryParse(servicePercent) ?? 0) / 100
+    //     : 0;
+    //
+    // double taxAmount = taxEnabled
+    //     ? subTotal * (double.tryParse(taxPercent) ?? 0) / 100
+    //     : 0;
+    //
+    // double discountAmount =
+    // (double.tryParse(discountPercent) ?? 0) > 0
+    //     ? subTotal * (double.tryParse(discountPercent) ?? 0) / 100
+    //     : 0;
+
     double serviceAmount = serviceEnabled
         ? subTotal * (double.tryParse(servicePercent) ?? 0) / 100
         : 0;
@@ -1730,9 +2090,15 @@ class _Menu extends State<Menu> {
         ? subTotal * (double.tryParse(taxPercent) ?? 0) / 100
         : 0;
 
-    double discountAmount =
-    (double.tryParse(discountPercent) ?? 0) > 0
-        ? subTotal * (double.tryParse(discountPercent) ?? 0) / 100
+// Total Before Discount
+    double totalAmount = subTotal + serviceAmount + taxAmount;
+
+    double discountPercentValue =
+        double.tryParse(discountPercent) ?? 0;
+
+// Discount on Total
+    double discountAmount = discountPercentValue > 0
+        ? totalAmount * (discountPercentValue / 100)
         : 0;
 
     bytes += generator.row([
@@ -1757,7 +2123,7 @@ class _Menu extends State<Menu> {
     if (serviceEnabled) {
       bytes += generator.row([
         PosColumn(
-          text: "Service (${servicePercent}%)",
+          text: "Service  (${servicePercent}%)",
           width: 6,
           styles: PosStyles(align: PosAlign.left),
         ),
@@ -1772,7 +2138,7 @@ class _Menu extends State<Menu> {
     if (taxEnabled) {
       bytes += generator.row([
         PosColumn(
-          text: "Tax (${taxPercent}%)",
+          text: "GST (${taxPercent}%)",
           width: 6,
           styles: PosStyles(align: PosAlign.left),
         ),
@@ -1784,7 +2150,31 @@ class _Menu extends State<Menu> {
       ]);
     }
 
-    if ((double.tryParse(discountPercent) ?? 0) > 0) {
+// Discount ho to Total + Discount show karo
+    if (discountPercentValue > 0) {
+      bytes += generator.hr();
+
+      bytes += generator.row([
+        PosColumn(
+          text: "Total",
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.left,
+            bold: true,
+          ),
+        ),
+        PosColumn(
+          text: "Rs ${totalAmount.toInt()}",
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            bold: true,
+          ),
+        ),
+      ]);
+
+      bytes += generator.hr();
+
       bytes += generator.row([
         PosColumn(
           text: "Discount (${discountPercent}%)",
@@ -1810,9 +2200,59 @@ class _Menu extends State<Menu> {
         width: PosTextSize.size2,
       ),
     );
+    bytes += generator.hr();
 
 
     bytes += generator.feed(1);
+
+
+
+
+
+    final random = Random();
+
+    final kapraInvoiceNumber = List.generate(
+      22,
+          (_) => random.nextInt(10),
+    ).join();
+
+    bytes += generator.text(
+      "KPRA Invoice No",
+      styles: const PosStyles(
+        align: PosAlign.center,
+        bold: true,
+      ),
+    );
+
+    bytes += generator.text(
+      kapraInvoiceNumber,
+      styles: const PosStyles(
+        align: PosAlign.center,
+        bold: true,
+      ),
+    );
+    bytes += generator.feed(1);
+
+
+    bytes += generator.qrcode(
+      "https://rims.kpra.gov.pk/",
+      size: QRSize.Size8,
+      align: PosAlign.center,
+    );
+
+    bytes += generator.feed(1);
+
+    bytes += generator.text(
+      "Thank You",
+      styles: const PosStyles(
+        align: PosAlign.center,
+        bold: true,
+      ),
+    );
+
+    bytes += generator.hr();
+
+
 
 
     bytes += generator.text(
@@ -1861,9 +2301,11 @@ class _Menu extends State<Menu> {
       await socket.flush();
       socket.destroy();
 
-      print("SUCCESS");
+return true;
+
     } catch (e) {
       print(e);
+      return false;
 
     }
 
@@ -1871,49 +2313,6 @@ class _Menu extends State<Menu> {
 
 
 
-  // Future<void> _sendToPrinter(List<int> bytes, BuildContext context) async {
-  //   Socket? socket;
-  //
-  //   try {
-  //     String ip = await getPrinterIp();
-  //     if (ip.isEmpty) return;
-  //
-  //     for (int i = 0; i < 3; i++) {
-  //       try {
-  //         socket = await Socket.connect(
-  //           InternetAddress(ip, type: InternetAddressType.IPv4),
-  //           9100,
-  //           timeout: const Duration(seconds: 5),
-  //         );
-  //
-  //         socket.add(bytes);
-  //         await socket.flush();
-  //         socket.destroy();
-  //
-  //         if (context.mounted) {
-  //           ScaffoldMessenger.of(context).showSnackBar(
-  //             const SnackBar(content: Text("✅ Printed Successfully")),
-  //           );
-  //         }
-  //
-  //         return;
-  //       } catch (e) {
-  //         socket?.destroy();
-  //         await Future.delayed(const Duration(milliseconds: 500));
-  //       }
-  //     }
-  //
-  //     throw Exception("Printer not reachable");
-  //   } catch (e) {
-  //     if (context.mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(content: Text("❌ Print error: $e")),
-  //       );
-  //     }
-  //   } finally {
-  //     socket?.destroy();
-  //   }
-  // }
 
 
 
@@ -2281,6 +2680,7 @@ class _Menu extends State<Menu> {
                             int nextOrderNumber = maxOrderId + 1;
 
                             final order = Order(
+                              hotelName: widget.hotelName,
                               orderId: nextOrderNumber.toString(),
                               orderType: selectedOrderType,
                               tableNumber: tableNumber,
@@ -3180,6 +3580,55 @@ class _Menu extends State<Menu> {
     return uploadedUrl;
   }
 
+  TextSpan highlightText(String text, String query) {
+    if (query.isEmpty) {
+      return TextSpan(
+        text: text,
+        style: const TextStyle(
+          color: Colors.black,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
 
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
 
+    final start = lowerText.indexOf(lowerQuery);
+
+    if (start == -1) {
+      return TextSpan(
+        text: text,
+        style: const TextStyle(
+          color: Colors.black,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
+
+    final end = start + lowerQuery.length;
+
+    return TextSpan(
+      style: const TextStyle(
+        color: Colors.black,
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+      ),
+      children: [
+        TextSpan(text: text.substring(0, start)),
+        TextSpan(
+          text: text.substring(start, end),
+          style: const TextStyle(
+            backgroundColor: Colors.yellow,
+            color: Colors.black,
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        TextSpan(text: text.substring(end)),
+      ],
+    );
+  }
 }

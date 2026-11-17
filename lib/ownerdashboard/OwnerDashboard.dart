@@ -1,29 +1,38 @@
 import 'package:demoproject/inventory/InventoryScreen.dart';
 import 'package:demoproject/inventory/RecipeScreen.dart';
 import 'package:demoproject/ownerdashboard/AddStaff.dart';
-import 'package:flutter/cupertino.dart';
+import 'package:demoproject/ownerdashboard/OwnerSale.dart';
 import 'package:flutter/material.dart';
 
-import '../dashoard/OrderList.dart';
 import 'OrderHistory.dart';
 
 class Ownerdashboard extends StatefulWidget {
   final String hotelName;
 
-  const Ownerdashboard({super.key, required this.hotelName});
+  const Ownerdashboard({
+    super.key,
+    required this.hotelName,
+  });
 
   @override
   State<Ownerdashboard> createState() => _OwnerdashboardState();
 }
 
-class _OwnerdashboardState extends State<Ownerdashboard> with SingleTickerProviderStateMixin{
-
+class _OwnerdashboardState extends State<Ownerdashboard>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
+  bool get isMobile =>
+      MediaQuery.of(context).size.width < 700;
+
   @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    _tabController = TabController(
+      length: isMobile ? 1 : 5,
+      vsync: this,
+    );
   }
 
   @override
@@ -32,47 +41,81 @@ class _OwnerdashboardState extends State<Ownerdashboard> with SingleTickerProvid
     super.dispose();
   }
 
+  List<Widget> get pages {
+    if (isMobile) {
+      return [
+        OwnerSale(hotelName: widget.hotelName),
+    //    AddStaff(hotelName: widget.hotelName),
+      ];
+    }
+
+    return [
+    //  OwnerSale(hotelName: widget.hotelName),
+      OrderHistory(hotelName: widget.hotelName),
+      AddStaff(hotelName: widget.hotelName),
+      Inventoryscreen(hotelName: widget.hotelName),
+      Recipescreen(hotelName: widget.hotelName),
+    ];
+  }
+
+  List<Tab> get tabs {
+    if (isMobile) {
+      return const [
+        Tab(
+          icon: Icon(Icons.attach_money),
+          text: "Sale",
+        ),
+        // Tab(
+        //   icon: Icon(Icons.history),
+        //   text: "Add Staff",
+        // ),
+      ];
+    }
+
+    return const [
+      // Tab(
+      //   icon: Icon(Icons.attach_money),
+      //   text: "Sale",
+      // ),
+      Tab(
+        icon: Icon(Icons.history),
+        text: "History",
+      ),
+      Tab(
+        icon: Icon(Icons.people),
+        text: "Staff",
+      ),
+      Tab(
+        icon: Icon(Icons.inventory_2),
+        text: "Inventory",
+      ),
+      Tab(
+        icon: Icon(Icons.restaurant_menu),
+        text: "Recipe",
+      ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
-      // appBar: AppBar(
-      //   title: const Text("Dashboard", style: TextStyle(color: Colors.white)),
-      //   backgroundColor: Colors.green,
-      // ),
-
       body: TabBarView(
         controller: _tabController,
-        children: [
-
-
-          OrderHistory(hotelName: widget.hotelName),
-          AddStaff(hotelName: widget.hotelName),
-          Inventoryscreen(hotelName: widget.hotelName),
-          Recipescreen(hotelName: widget.hotelName),
-        ],
+        children: pages,
       ),
-
-      // ✅ Tabs always at bottom (Desktop + Mobile)
       bottomNavigationBar: SafeArea(
         top: false,
-        child: Container(
+        child: Material(
           color: Colors.green,
           child: TabBar(
             controller: _tabController,
+            tabs: tabs,
+            indicatorColor: Colors.white,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
-            indicatorColor: Colors.white,
-            tabs: const [
-              Tab(icon: Icon(Icons.point_of_sale), text: "Order History"),
-              Tab(icon: Icon(Icons.people), text: "Add Staff"),
-              Tab(icon: Icon(Icons.people), text: "Inventory"),
-              Tab(icon: Icon(Icons.people), text: "Recipe"),
-             // Tab(icon: Icon(Icons.list), text: "Show Menu"),
-            ],
           ),
         ),
       ),
-    );  }
+    );
+  }
 }

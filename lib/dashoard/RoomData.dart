@@ -13,7 +13,6 @@ class RoomData extends StatefulWidget {
 
   const RoomData({super.key, required this.hotelName});
 
-
   @override
   State<RoomData> createState() => _RoomDataState();
 }
@@ -29,11 +28,8 @@ class _RoomDataState extends State<RoomData> {
     roomBox = Hive.box<RoomBooking>('roomsBox');
     historyBox = Hive.box<RoomHistory>('roomHistory'); // ✅ ADD THIS
 
-
-
     loadHotelInfo();
   }
-
 
   Future<void> loadHotelInfo() async {
     final ref = FirebaseDatabase.instance.ref(
@@ -59,48 +55,43 @@ class _RoomDataState extends State<RoomData> {
     setState(() {});
   }
 
-
-
   // 🔥 ADD ROOM
   void _addRoomDialog() {
     final roomController = TextEditingController();
 
     showDialog(
       context: context,
-      builder: (_) =>
-          AlertDialog(
-            title: const Text("Add Room"),
-            content: TextField(
-              controller: roomController,
-              decoration: const InputDecoration(
-                labelText: "Room Number",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Cancel"),
-              ),
-              TextButton(
-                onPressed: () {
-                  if (roomController.text
-                      .trim()
-                      .isEmpty) return;
-
-                  final room = RoomBooking(
-                    roomName: roomController.text.trim(),
-                    status: "available",
-                  );
-
-                  roomBox.add(room);
-                  setState(() {});
-                  Navigator.pop(context);
-                },
-                child: const Text("Save"),
-              ),
-            ],
+      builder: (_) => AlertDialog(
+        title: const Text("Add Room"),
+        content: TextField(
+          controller: roomController,
+          decoration: const InputDecoration(
+            labelText: "Room Number",
+            border: OutlineInputBorder(),
           ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () {
+              if (roomController.text.trim().isEmpty) return;
+
+              final room = RoomBooking(
+                roomName: roomController.text.trim(),
+                status: "available",
+              );
+
+              roomBox.add(room);
+              setState(() {});
+              Navigator.pop(context);
+            },
+            child: const Text("Save"),
+          ),
+        ],
+      ),
     );
   }
 
@@ -120,7 +111,10 @@ class _RoomDataState extends State<RoomData> {
     final advance = TextEditingController();
     final rent = TextEditingController();
 
-    String stayType = "24 Hours";
+    DateTime? checkInDate;
+    DateTime? checkOutDate;
+
+    int totalDays = 1;
 
     showDialog(
       context: context,
@@ -136,7 +130,6 @@ class _RoomDataState extends State<RoomData> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-
                   // 🔥 HEADER
                   Container(
                     width: double.infinity,
@@ -161,8 +154,10 @@ class _RoomDataState extends State<RoomData> {
                   const SizedBox(height: 18),
 
                   // ================= CUSTOMER =================
-                  const Text("👤 Customer Details",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Text(
+                    "👤 Customer Details",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
 
                   const SizedBox(height: 12),
 
@@ -180,7 +175,13 @@ class _RoomDataState extends State<RoomData> {
                     children: [
                       Expanded(child: _input(cnic, "CNIC", Icons.badge)),
                       const SizedBox(width: 10),
-                      Expanded(child: _input(carNumber, "Car No", Icons.directions_car)),
+                      Expanded(
+                        child: _input(
+                          carNumber,
+                          "Car No",
+                          Icons.directions_car,
+                        ),
+                      ),
                     ],
                   ),
 
@@ -191,38 +192,139 @@ class _RoomDataState extends State<RoomData> {
                   const SizedBox(height: 18),
 
                   // ================= STAY =================
-                  const Text("⏰ Stay Details",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Text(
+                    "📅 Stay Details",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
 
                   const SizedBox(height: 10),
 
-                  DropdownButtonFormField<String>(
-                    value: stayType,
-                    decoration: InputDecoration(
-                      labelText: "Stay Duration",
-                      prefixIcon: const Icon(Icons.timer),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.calendar_today),
+
+                          label: Text(
+                            checkInDate == null
+                                ? "Check In"
+                                : "${checkInDate!.day}/${checkInDate!.month}/${checkInDate!.year}",
+                          ),
+
+                          onPressed: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+
+                              initialDate: DateTime.now(),
+
+                              firstDate: DateTime.now(),
+
+                              lastDate: DateTime(2035),
+                            );
+
+                            if (picked != null) {
+                              setStateDialog(() {
+                                checkInDate = picked;
+
+                                if (checkOutDate != null) {
+                                  totalDays = checkOutDate!
+                                      .difference(checkInDate!)
+                                      .inDays;
+
+                                  if (totalDays <= 0) {
+                                    totalDays = 1;
+                                  }
+                                }
+                              });
+                            }
+                          },
+                        ),
                       ),
-                    ),
-                    items: [
-                      "12 Hours",
-                      "24 Hours",
-                      "1 Day",
-                      "2 Days",
-                      "3 Days",
-                      "5 Days",
-                    ]
-                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                        .toList(),
-                    onChanged: (v) => setStateDialog(() => stayType = v!),
+
+                      const SizedBox(width: 10),
+
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.event),
+
+                          label: Text(
+                            checkOutDate == null
+                                ? "Check Out"
+                                : "${checkOutDate!.day}/${checkOutDate!.month}/${checkOutDate!.year}",
+                          ),
+
+                          onPressed: () async {
+                            if (checkInDate == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text("Please select Check In first"),
+                                ),
+                              );
+
+                              return;
+                            }
+
+                            final picked = await showDatePicker(
+                              context: context,
+
+                              initialDate: checkInDate!,
+
+                              firstDate: checkInDate!,
+
+                              lastDate: DateTime(2035),
+                            );
+
+                            if (picked != null) {
+                              setStateDialog(() {
+                                checkOutDate = picked;
+
+                                totalDays = checkOutDate!
+                                    .difference(checkInDate!)
+                                    .inDays;
+
+                                if (totalDays <= 0) {
+                                  totalDays = 1;
+                                }
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                    ],
                   ),
 
+                  const SizedBox(height: 10),
+
+                  Container(
+                    width: double.infinity,
+
+                    padding: const EdgeInsets.all(12),
+
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+
+                    child: Text(
+                      "Stay : $totalDays Day(s)",
+
+                      textAlign: TextAlign.center,
+
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 18),
 
                   // ================= PAYMENT =================
-                  const Text("💰 Payment Details",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Text(
+                    "💰 Payment Details",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
 
                   const SizedBox(height: 10),
 
@@ -230,7 +332,9 @@ class _RoomDataState extends State<RoomData> {
                     children: [
                       Expanded(child: _input(rent, "Room Rent", Icons.money)),
                       const SizedBox(width: 10),
-                      Expanded(child: _input(advance, "Advance", Icons.payments)),
+                      Expanded(
+                        child: _input(advance, "Advance", Icons.payments),
+                      ),
                     ],
                   ),
 
@@ -239,7 +343,6 @@ class _RoomDataState extends State<RoomData> {
                   // ================= BUTTONS =================
                   Row(
                     children: [
-
                       Expanded(
                         child: OutlinedButton(
                           style: OutlinedButton.styleFrom(
@@ -266,19 +369,23 @@ class _RoomDataState extends State<RoomData> {
                             ),
                           ),
                           onPressed: () {
+                            // ✅ Check Dates
+                            if (checkInDate == null || checkOutDate == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    "Please select Check In & Check Out dates",
+                                  ),
+                                ),
+                              );
+
+                              return;
+                            }
+
                             int baseRent = int.tryParse(rent.text) ?? 0;
 
-                            int finalRent = baseRent;
-
-                            if (stayType == "12 Hours") {
-                             // finalRent = (baseRent / 2).round();
-                            } else if (stayType == "2 Days") {
-                              finalRent = baseRent * 2;
-                            } else if (stayType == "3 Days") {
-                              finalRent = baseRent * 3;
-                            } else if (stayType == "5 Days") {
-                              finalRent = baseRent * 5;
-                            }
+                            // Total Rent = Room Rent × Total Days
+                            int finalRent = baseRent * totalDays;
 
                             room.customerName = name.text.trim();
                             room.customerPhone = phone.text.trim();
@@ -287,10 +394,13 @@ class _RoomDataState extends State<RoomData> {
                             room.carNumber = carNumber.text.trim();
                             room.advance = int.tryParse(advance.text) ?? 0;
                             room.rent = finalRent;
-                            room.stayType = stayType;
+                            room.dailyRent = baseRent;
+                            room.stayType = "$totalDays Day(s)";
 
-                            room.checkIn =
-                                DateTime.now().toLocal().toIso8601String();
+
+
+                            room.checkIn = checkInDate!.toIso8601String();
+                            room.checkOut = checkOutDate!.toIso8601String();
 
                             room.status = "occupied";
                             room.save();
@@ -315,28 +425,34 @@ class _RoomDataState extends State<RoomData> {
     );
   }
 
-// 🔥 COMMON INPUT WIDGET
+  // 🔥 COMMON INPUT WIDGET
   Widget _input(TextEditingController controller, String label, IconData icon) {
     return TextField(
       controller: controller,
-      keyboardType:
-      label == "Rent" || label == "Advance" ? TextInputType.number : null,
+      keyboardType: label == "Rent" || label == "Advance"
+          ? TextInputType.number
+          : null,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),
         contentPadding: const EdgeInsets.symmetric(vertical: 12),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
-
 
   void _showRoomDetails(RoomBooking room) {
     int total = room.rent ?? 0;
     int advance = room.advance ?? 0;
     int remaining = total - advance;
+
+
+    int refund = 0;
+
+    if (remaining < 0) {
+      refund = remaining.abs();
+      remaining = 0;
+    }
 
     DateTime? startTime;
 
@@ -348,29 +464,11 @@ class _RoomDataState extends State<RoomData> {
       startTime = null;
     }
 
+
     DateTime? checkoutTime;
 
-    if (startTime != null) {
-      switch (room.stayType) {
-        case "12 Hours":
-          checkoutTime = startTime.add(const Duration(hours: 12));
-          break;
-        case "24 Hours":
-          checkoutTime = startTime.add(const Duration(hours: 24));
-          break;
-        case "1 Day":
-          checkoutTime = startTime.add(const Duration(days: 1));
-          break;
-        case "2 Days":
-          checkoutTime = startTime.add(const Duration(days: 2));
-          break;
-        case "3 Days":
-          checkoutTime = startTime.add(const Duration(days: 3));
-          break;
-        case "5 Days":
-          checkoutTime = startTime.add(const Duration(days: 5));
-          break;
-      }
+    if (room.checkOut != null && room.checkOut!.isNotEmpty) {
+      checkoutTime = DateTime.tryParse(room.checkOut!)?.toLocal();
     }
 
     String format(DateTime? dt) {
@@ -398,9 +496,7 @@ class _RoomDataState extends State<RoomData> {
     showDialog(
       context: context,
       builder: (_) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         child: Container(
           width: 450,
           padding: const EdgeInsets.all(16),
@@ -408,25 +504,58 @@ class _RoomDataState extends State<RoomData> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-
                 // 🔥 HEADER
+// 🔥 HEADER
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.green,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Text(
-                    "Room ${room.roomName} Details",
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  child: Row(
+                    children: [
+
+                      Expanded(
+                        child: Text(
+                          "Room ${room.roomName} Details",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+
+                      Tooltip(
+                        message: "Edit Booking",
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () {
+                            Navigator.pop(context);
+                            showEditBookingDialog(room);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.18),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.edit,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                    ],
                   ),
                 ),
-
                 const SizedBox(height: 18),
 
                 // 🔥 CUSTOMER + STAY ROW
@@ -436,21 +565,26 @@ class _RoomDataState extends State<RoomData> {
 
                     return isSmall
                         ? Column(
-                      children: [
-                        _customerCard(room),
-                        const SizedBox(height: 12),
-                        _stayCard(room, startTime, checkoutTime, format),
-                      ],
-                    )
+                            children: [
+                              _customerCard(room),
+                              const SizedBox(height: 12),
+                              _stayCard(room, startTime, checkoutTime, format),
+                            ],
+                          )
                         : Row(
-                      children: [
-                        Expanded(child: _customerCard(room)),
-                        const SizedBox(width: 12),
-                        Expanded(
-                            child: _stayCard(
-                                room, startTime, checkoutTime, format)),
-                      ],
-                    );
+                            children: [
+                              Expanded(child: _customerCard(room)),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _stayCard(
+                                  room,
+                                  startTime,
+                                  checkoutTime,
+                                  format,
+                                ),
+                              ),
+                            ],
+                          );
                   },
                 ),
 
@@ -471,7 +605,19 @@ class _RoomDataState extends State<RoomData> {
                     children: [
                       _billLine("Rent", total),
                       _billLine("Advance", advance),
-                      _billLine("Remaining", remaining, isRed: true),
+
+                      if (refund > 0)
+                        _billLine(
+                          "Refund",
+                          refund,
+                          isGreen: true,
+                        )
+                      else
+                        _billLine(
+                          "Remaining",
+                          remaining,
+                          isRed: true,
+                        ),
                     ],
                   ),
                 ),
@@ -481,7 +627,6 @@ class _RoomDataState extends State<RoomData> {
                 // 🔥 BUTTONS
                 Row(
                   children: [
-
                     // CANCEL
                     Expanded(
                       child: SizedBox(
@@ -508,6 +653,8 @@ class _RoomDataState extends State<RoomData> {
                     ),
 
                     const SizedBox(width: 10),
+
+                    // EDIT
 
                     // PRINT
                     Expanded(
@@ -543,7 +690,9 @@ class _RoomDataState extends State<RoomData> {
                     Expanded(
                       child: SizedBox(
                         height: 52,
-                        child: ElevatedButton.icon(
+                        child:
+
+                        ElevatedButton.icon(
                           icon: const Icon(Icons.check_circle, size: 20),
 
                           style: ElevatedButton.styleFrom(
@@ -560,10 +709,14 @@ class _RoomDataState extends State<RoomData> {
                             int remaining = rent - advance;
 
                             final TextEditingController remainingController =
-                            TextEditingController(text: remaining.toString());
+                            TextEditingController(
+                              text: remaining.toString(),
+                            );
 
                             // ⭐ IMPORTANT: direct await without microtask
-                            await Future.delayed(const Duration(milliseconds: 50));
+                            await Future.delayed(
+                              const Duration(milliseconds: 50),
+                            );
 
                             if (!context.mounted) return;
 
@@ -577,13 +730,14 @@ class _RoomDataState extends State<RoomData> {
                                   content: Column(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-
                                       Container(
                                         width: double.infinity,
                                         padding: const EdgeInsets.all(12),
                                         decoration: BoxDecoration(
                                           color: Colors.red.shade50,
-                                          borderRadius: BorderRadius.circular(10),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
                                         ),
                                         child: Text(
                                           "Remaining Amount: Rs $remaining",
@@ -604,7 +758,9 @@ class _RoomDataState extends State<RoomData> {
                                         decoration: InputDecoration(
                                           labelText: "Received Amount",
                                           border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(10),
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -613,67 +769,137 @@ class _RoomDataState extends State<RoomData> {
 
                                   actions: [
 
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(dialogContext),
-                                      child: const Text("Cancel"),
-                                    ),
-
-                                    ElevatedButton(
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.green,
+                                    SizedBox(
+                                      width: 120,
+                                      height: 42,
+                                      child: OutlinedButton(
+                                        style: OutlinedButton.styleFrom(
+                                          side: const BorderSide(color: Colors.red),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                        ),
+                                        onPressed: () {
+                                          Navigator.pop(dialogContext);
+                                        },
+                                        child: const Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.close, color: Colors.red, size: 18),
+                                            SizedBox(width: 6),
+                                            Text(
+                                              "Cancel",
+                                              style: TextStyle(
+                                                color: Colors.red,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-
-                                      onPressed: () async {
-                                        int paid = int.tryParse(remainingController.text) ?? 0;
-                                        int finalRemaining = remaining - paid;
-
-                                        DateTime now = DateTime.now();
-
-                                        final history = RoomHistory(
-                                          roomName: room.roomName,
-                                          customerName: room.customerName,
-                                          phone: room.customerPhone,
-                                          cnic: room.cnic,
-                                          carNumber: room.carNumber,
-                                          address: room.address,
-                                          rent: rent,
-                                          advance: advance + paid,
-                                          remaining: finalRemaining,
-                                          checkIn: room.checkIn,
-                                          checkOut: now.toIso8601String(),
-                                        );
-
-                                        await historyBox.add(history);
-
-                                        room.status = "available";
-                                        room.customerName = null;
-                                        room.customerPhone = null;
-                                        room.cnic = null;
-                                        room.address = null;
-                                        room.carNumber = null;
-                                        room.advance = 0;
-                                        room.rent = 0;
-                                        room.checkIn = null;
-                                        room.stayType = null;
-
-                                        await room.save();
-
-                                        setState(() {});
-
-                                        Navigator.pop(dialogContext);
-                                        Navigator.pop(context);
-                                      },
-
-                                      child: const Text("Checkout"),
                                     ),
-                                  ],
-                                );
+                                    SizedBox(
+                                      width: 140,
+                                      height: 42,
+                                      child: ElevatedButton(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.green.shade700,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                        ),
+                                        onPressed: () async {
+
+                                          int paid =
+                                              int.tryParse(
+                                                remainingController.text,
+                                              ) ??
+                                                  0;
+
+                                          // int finalRemaining = remaining - paid;
+                                          //
+                                          // int refund = 0;
+                                          //
+                                          // if (finalRemaining < 0) {
+                                          //   refund = finalRemaining.abs();
+                                          //   finalRemaining = 0;
+                                          // }
+
+
+                                          int finalAdvance = advance + paid;
+                                          int finalRemaining = rent - finalAdvance;
+
+                                          int refund = 0;
+
+                                          if (finalRemaining < 0) {
+                                            refund = finalRemaining.abs();
+                                            finalRemaining = 0;
+                                          }
+
+                                          DateTime now = DateTime.now();
+
+
+
+
+                                          final history = RoomHistory(
+                                            roomName: room.roomName,
+                                            customerName: room.customerName,
+                                            phone: room.customerPhone,
+                                            cnic: room.cnic,
+                                            carNumber: room.carNumber,
+                                            address: room.address,
+                                            rent: rent,
+                                            advance: finalAdvance,
+                                            remaining: finalRemaining,
+                                            checkIn: room.checkIn,
+                                            checkOut: now.toIso8601String(),
+                                            refund: refund,
+                                          );
+
+                                          await historyBox.add(history);
+
+                                          room.status = "available";
+                                          room.customerName = null;
+                                          room.customerPhone = null;
+                                          room.cnic = null;
+                                          room.address = null;
+                                          room.carNumber = null;
+                                          room.advance = 0;
+                                          room.rent = 0;
+                                          room.checkIn = null;
+                                          room.checkOut = null;
+                                          room.dailyRent = 0;
+                                          room.stayType = null;
+
+                                          await room.save();
+
+                                          setState(() {});
+
+                                          Navigator.pop(dialogContext);
+                                          Navigator.pop(context);
+
+                                        },
+                                        child: const Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.logout, color: Colors.white, size: 18),
+                                            SizedBox(width: 6),
+                                            Text(
+                                              "Checkout",
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+
+                                  ],                                );
                               },
                             );
                           },
-
-
-
 
                           label: const Text(
                             "Checkout",
@@ -688,6 +914,9 @@ class _RoomDataState extends State<RoomData> {
                     ),
                   ],
                 ),
+
+
+
               ],
             ),
           ),
@@ -696,38 +925,13 @@ class _RoomDataState extends State<RoomData> {
     );
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   // ================= HELPERS =================
   Widget _sectionTitle(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(
         text,
-        style: const TextStyle(
-          fontSize: 17,
-          fontWeight: FontWeight.bold,
-        ),
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -738,14 +942,15 @@ class _RoomDataState extends State<RoomData> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text("$label:",
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+          Text(
+            "$label:",
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+          ),
           Flexible(
             child: Text(
               value ?? "-",
               textAlign: TextAlign.right,
-              style: const TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -753,28 +958,38 @@ class _RoomDataState extends State<RoomData> {
     );
   }
 
-  Widget _billLine(String label, int value, {bool isRed = false}) {
+  Widget _billLine(
+      String label,
+      int value, {
+        bool isRed = false,
+        bool isGreen = false,
+      }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label,
-              style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.w500)),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
           Text(
             "Rs $value",
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: isRed ? Colors.red : Colors.black,
+              color: isGreen
+                  ? Colors.green
+                  : (isRed ? Colors.red : Colors.black),
             ),
           ),
         ],
       ),
     );
   }
-
   Widget _customerCard(RoomBooking room) {
     return Container(
       padding: const EdgeInsets.all(14),
@@ -798,11 +1013,11 @@ class _RoomDataState extends State<RoomData> {
   }
 
   Widget _stayCard(
-      RoomBooking room,
-      DateTime? startTime,
-      DateTime? checkoutTime,
-      String Function(DateTime?) format,
-      ) {
+    RoomBooking room,
+    DateTime? startTime,
+    DateTime? checkoutTime,
+    String Function(DateTime?) format,
+  ) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -821,9 +1036,6 @@ class _RoomDataState extends State<RoomData> {
       ),
     );
   }
-
-
-
 
   Future<void> printRoomBill(RoomBooking room, double grandTotal) async {
     final profile = await CapabilityProfile.load();
@@ -844,27 +1056,12 @@ class _RoomDataState extends State<RoomData> {
 
     DateTime? checkoutTime;
 
-    if (startTime != null) {
-      switch (room.stayType) {
-        case "12 Hours":
-          checkoutTime = startTime.add(const Duration(hours: 12));
-          break;
-        case "24 Hours":
-          checkoutTime = startTime.add(const Duration(hours: 24));
-          break;
-        case "1 Day":
-          checkoutTime = startTime.add(const Duration(days: 1));
-          break;
-        case "2 Days":
-          checkoutTime = startTime.add(const Duration(days: 2));
-          break;
-        case "3 Days":
-          checkoutTime = startTime.add(const Duration(days: 3));
-          break;
-        case "5 Days":
-          checkoutTime = startTime.add(const Duration(days: 5));
-          break;
+    try {
+      if (room.checkOut != null && room.checkOut!.isNotEmpty) {
+        checkoutTime = DateTime.tryParse(room.checkOut!)?.toLocal();
       }
+    } catch (_) {
+      checkoutTime = null;
     }
 
     // ================= AM/PM FORMAT =================
@@ -914,10 +1111,7 @@ class _RoomDataState extends State<RoomData> {
     // ================= TITLE =================
     bytes += generator.text(
       "ROOM INVOICE",
-      styles: PosStyles(
-        align: PosAlign.center,
-        bold: true,
-      ),
+      styles: PosStyles(align: PosAlign.center, bold: true),
     );
 
     bytes += generator.hr();
@@ -929,7 +1123,11 @@ class _RoomDataState extends State<RoomData> {
     ]);
 
     bytes += generator.row([
-      PosColumn(text: "Customer Name:", width: 4, styles: PosStyles(bold: true)),
+      PosColumn(
+        text: "Customer Name:",
+        width: 4,
+        styles: PosStyles(bold: true),
+      ),
       PosColumn(text: room.customerName ?? '', width: 8),
     ]);
 
@@ -956,8 +1154,6 @@ class _RoomDataState extends State<RoomData> {
       ),
     ]);
 
-
-
     // ================= STAY DETAILS =================
     bytes += generator.hr();
 
@@ -969,7 +1165,11 @@ class _RoomDataState extends State<RoomData> {
     bytes += generator.hr();
 
     bytes += generator.row([
-      PosColumn(text: "Stay Duration:", width: 4, styles: PosStyles(bold: true)),
+      PosColumn(
+        text: "Stay Duration:",
+        width: 4,
+        styles: PosStyles(bold: true),
+      ),
       PosColumn(text: room.stayType ?? '', width: 8),
     ]);
 
@@ -982,7 +1182,6 @@ class _RoomDataState extends State<RoomData> {
       PosColumn(text: "Check Out:", width: 4, styles: PosStyles(bold: true)),
       PosColumn(text: format(checkoutTime), width: 8),
     ]);
-
 
     bytes += generator.hr();
 
@@ -1010,18 +1209,11 @@ class _RoomDataState extends State<RoomData> {
     ]);
 
     bytes += generator.row([
-      PosColumn(
-        text: "Remaining",
-        width: 6,
-        styles: PosStyles(bold: true),
-      ),
+      PosColumn(text: "Remaining", width: 6, styles: PosStyles(bold: true)),
       PosColumn(
         text: "Rs $remaining",
         width: 6,
-        styles: PosStyles(
-          align: PosAlign.right,
-          bold: true,
-        ),
+        styles: PosStyles(align: PosAlign.right, bold: true),
       ),
     ]);
 
@@ -1074,11 +1266,11 @@ class _RoomDataState extends State<RoomData> {
       print("❌ Print Error: $e");
     }
   }
+
   Future<String> getPrinterIp() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString("printer_ip") ?? "192.168.0.142";
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -1119,43 +1311,40 @@ class _RoomDataState extends State<RoomData> {
             onLongPress: () {
               showDialog(
                 context: context,
-                builder: (_) =>
-                    AlertDialog(
-                      title: const Text("Delete Room"),
-                      content: const Text(
-                          "Are you sure you want to delete this room?"),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text("No"),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            _deleteRoom(index);
-                            Navigator.pop(context);
-                          },
-                          child: const Text(
-                            "Yes",
-                            style: TextStyle(color: Colors.red),
-                          ),
-                        ),
-                      ],
+                builder: (_) => AlertDialog(
+                  title: const Text("Delete Room"),
+                  content: const Text(
+                    "Are you sure you want to delete this room?",
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("No"),
                     ),
+                    TextButton(
+                      onPressed: () {
+                        _deleteRoom(index);
+                        Navigator.pop(context);
+                      },
+                      child: const Text(
+                        "Yes",
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  ],
+                ),
               );
             },
 
             child: Container(
               decoration: BoxDecoration(
-                color: room.status == "available"
-                    ? Colors.green
-                    : Colors.red,
+                color: room.status == "available" ? Colors.green : Colors.red,
                 borderRadius: BorderRadius.circular(12),
               ),
 
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-
                   Text(
                     room.roomName,
                     style: const TextStyle(
@@ -1168,9 +1357,7 @@ class _RoomDataState extends State<RoomData> {
                   const SizedBox(height: 10),
 
                   Text(
-                    room.status == "available"
-                        ? "Available"
-                        : "Booked",
+                    room.status == "available" ? "Available" : "Booked",
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 25,
@@ -1186,4 +1373,292 @@ class _RoomDataState extends State<RoomData> {
     );
   }
 
+  void showEditBookingDialog(RoomBooking room) {
+    final name = TextEditingController(text: room.customerName ?? "");
+
+    final phone = TextEditingController(text: room.customerPhone ?? "");
+
+    final cnic = TextEditingController(text: room.cnic ?? "");
+
+    final address = TextEditingController(text: room.address ?? "");
+
+    final carNumber = TextEditingController(text: room.carNumber ?? "");
+
+    final advance = TextEditingController(text: (room.advance ?? 0).toString());
+
+    final rent = TextEditingController(text: (room.rent ?? 0).toString());
+
+
+
+
+
+    DateTime checkInDate =
+        DateTime.tryParse(room.checkIn ?? "") ??
+            DateTime.now();
+
+    DateTime checkOutDate =
+        DateTime.tryParse(room.checkOut ?? "") ??
+            checkInDate.add(const Duration(days: 1));
+
+    showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: Text("Edit Booking"),
+          content: StatefulBuilder(
+            builder: (context, setStateDialog) {
+              return SizedBox(
+                width: 500,
+
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      _input(name, "Customer Name", Icons.person),
+
+                      const SizedBox(height: 10),
+
+                      _input(phone, "Phone", Icons.phone),
+
+                      const SizedBox(height: 10),
+
+                      _input(cnic, "CNIC", Icons.badge),
+
+                      const SizedBox(height: 10),
+
+                      _input(address, "Address", Icons.home),
+
+                      const SizedBox(height: 10),
+
+                      _input(carNumber, "Car No", Icons.directions_car),
+
+                      const SizedBox(height: 15),
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _input(rent, "Room Rent", Icons.money),
+                          ),
+
+                          const SizedBox(width: 10),
+
+                          Expanded(
+                            child: _input(advance, "Advance", Icons.payments),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // ================= CHECK IN =================
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.calendar_today),
+                        label: Text(
+                          "Check In : "
+                          "${checkInDate.day}/${checkInDate.month}/${checkInDate.year}",
+                        ),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: checkInDate,
+                            firstDate: DateTime(2024),
+                            lastDate: DateTime(2035),
+                          );
+
+                          if (picked != null) {
+                            setStateDialog(() {
+                              checkInDate = picked;
+
+                              // Agar checkout pehle ho gaya to usko bhi update karo
+                              if (checkOutDate.isBefore(checkInDate)) {
+                                checkOutDate = checkInDate.add(
+                                  const Duration(days: 1),
+                                );
+                              }
+
+                              // Stay Days
+                              int days = checkOutDate
+                                  .difference(checkInDate)
+                                  .inDays;
+
+                              if (days <= 0) days = 1;
+
+                              // Auto Rent
+                              int totalRent = (int.tryParse(room.rent.toString()) ?? 0) * days;
+
+                              rent.text = totalRent.toString();
+                            });
+                          }
+                        },
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      // ================= CHECK OUT =================
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.event),
+                        label: Text(
+                          "Check Out : "
+                          "${checkOutDate.day}/${checkOutDate.month}/${checkOutDate.year}",
+                        ),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: checkOutDate,
+                            firstDate: checkInDate,
+                            lastDate: DateTime(2035),
+                          );
+
+                          if (picked != null) {
+                            setStateDialog(() {
+                              checkOutDate = picked;
+
+                              int days = checkOutDate
+                                  .difference(checkInDate)
+                                  .inDays;
+
+                              if (days <= 0) days = 1;
+
+                              int totalRent = (room.dailyRent ?? 0) * days;
+
+                              rent.text = totalRent.toString();
+                            });
+                          }
+                        },
+                      ),
+
+                      const SizedBox(height: 15),
+
+                      Builder(
+                        builder: (_) {
+                          int days = checkOutDate
+                              .difference(checkInDate)
+                              .inDays;
+
+                          if (days <= 0) days = 1;
+
+                          int totalRent = int.tryParse(rent.text) ?? 0;
+
+                          int adv = int.tryParse(advance.text) ?? 0;
+
+                          int remaining = totalRent - adv;
+
+                          return Card(
+                            color: Colors.green.shade50,
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                children: [
+                                  Text(
+                                    "Stay : $days Day(s)",
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+
+                                  const SizedBox(height: 5),
+
+                                  Text("Total Rent : Rs $totalRent"),
+
+                                  Text(
+                                    "Remaining : Rs $remaining",
+                                    style: const TextStyle(
+                                      color: Colors.red,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () {
+                                Navigator.pop(context);
+                              },
+                              child: const Text("Cancel"),
+                            ),
+                          ),
+
+                          const SizedBox(width: 10),
+
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.save),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                              ),
+                              onPressed: () async {
+                                int totalRent = int.tryParse(rent.text) ?? 0;
+
+                                int adv = int.tryParse(advance.text) ?? 0;
+
+                                int days = checkOutDate
+                                    .difference(checkInDate)
+                                    .inDays;
+
+                                if (days <= 0) days = 1;
+
+                                room.customerName = name.text.trim();
+                                room.customerPhone = phone.text.trim();
+                                room.cnic = cnic.text.trim();
+                                room.address = address.text.trim();
+                                room.carNumber = carNumber.text.trim();
+
+                                room.rent = totalRent;
+                                room.advance = adv;
+
+                                room.checkIn = checkInDate.toIso8601String();
+
+                                room.checkOut = checkOutDate.toIso8601String();
+
+                                room.stayType = "$days Day(s)";
+
+                                await room.save();
+
+                                if (mounted) {
+                                  Navigator.pop(context);
+
+                                  setState(() {});
+
+                                  Future.delayed(
+                                    const Duration(milliseconds: 100),
+                                        () {
+                                      _showRoomDetails(room);
+                                    },
+                                  );
+
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        "Booking Updated Successfully",
+                                      ),
+                                    ),
+                                  );
+                                }
+                              },
+                              label: const Text(
+                                "Update Booking",
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
 }
