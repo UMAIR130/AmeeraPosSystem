@@ -48,5 +48,22 @@ jobs:
 
 
 
+      - name: Upload Windows Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: POS-Windows-Installer
+          path: installer_output/POS-Setup.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: POS System v1.0.${{ github.run_number }}
+          files: installer_output/POS-Setup.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
 
