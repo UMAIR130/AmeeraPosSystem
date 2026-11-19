@@ -22,8 +22,8 @@ AppId={{A71F6C29-8D43-4B52-9E21-71C9A2F48310}
         Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
         [Icons]
-        Name: "{autoprograms}\POS System"; Filename: "{app}\PosSystem.exe"
-        Name: "{autodesktop}\POS System"; Filename: "{app}\PosSystem.exe"; Tasks: desktopicon
+        Name: "{autoprograms}\POS System"; Filename: "{app}\demoproject.exe"
+        Name: "{autodesktop}\POS System"; Filename: "{app}\demoproject.exe"; Tasks: desktopicon
 
         [Run]
-        Filename: "{app}\PosSystem.exe"; Description: "Launch POS System"; Flags: postinstall nowait skipifsilent
+        Filename: "{app}\demoproject.exe"; Description: "Launch POS System"; Flags: postinstall nowait skipifsilent
