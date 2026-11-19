@@ -1,5 +1,5 @@
 
-#define MyAppName "POS System"
+#define MyAppName "Ameera POS"
 #define MyAppVersion "1.0.0"
 
 [Setup]
